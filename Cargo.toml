@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/taiyaki-core",
+    "crates/taiyaki-python",
+    "crates/taiyaki-cli",
+    "crates/taiyaki-node-polyfill",
+]
+default-members = [
+    "crates/taiyaki-core",
+    "crates/taiyaki-cli",
+]

@@ -1,0 +1,24 @@
+[package]
+name = "taiyaki-python"
+version = "0.1.0"
+edition = "2024"
+description = "Python bindings for taiyaki JS/TS runtime"
+license = "MIT"
+repository = "https://github.com/i2y/taiyaki"
+authors = ["Yasushi Itoh"]
+publish = false
+
+[lib]
+name = "taiyaki"
+crate-type = ["cdylib"]
+
+[features]
+default = ["quickjs"]
+quickjs = ["taiyaki-core/futures", "taiyaki-node-polyfill/futures"]
+jsc = ["taiyaki-core/jsc", "taiyaki-node-polyfill/jsc"]
+
+[dependencies]
+taiyaki-core = { path = "../taiyaki-core", default-features = false }
+taiyaki-node-polyfill = { path = "../taiyaki-node-polyfill", default-features = false }
+pyo3 = { version = "0.24", features = ["extension-module"] }
+tokio = { version = "1", features = ["rt", "time"] }
