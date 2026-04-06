@@ -78,6 +78,10 @@ import taiyaki
 rt = taiyaki.AsyncRuntime()
 rt.enable_node_polyfills()
 
+# npm packages — fetched from registry, cached, no npm CLI needed
+rt.install_dependencies(["lodash@4", "dayjs"])
+result = rt.eval("lodash.chunk([1,2,3,4,5,6], 2)")
+
 # Evaluate TypeScript
 result = rt.eval_ts("const x: number = 1 + 1; x")
 
@@ -97,6 +101,7 @@ app = Taiyaki(
     components_dir="components",
     islands_dir="islands",
     layout="Layout",
+    dependencies=["lodash@4"],  # npm packages available in SSR
 )
 
 @app.get("/", component="Home")
