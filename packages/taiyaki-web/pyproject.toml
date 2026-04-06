@@ -9,7 +9,6 @@ keywords = ["web", "framework", "preact", "ssr", "htmx"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Framework :: AsyncIO",
-    "License :: OSI Approved :: MIT License",
 ]
 dependencies = [
     "starlette>=1.0",

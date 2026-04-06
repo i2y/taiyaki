@@ -13,7 +13,6 @@ keywords = ["javascript", "typescript", "runtime", "javascriptcore"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Rust",
-    "License :: OSI Approved :: MIT License",
 ]
 
 [project.urls]

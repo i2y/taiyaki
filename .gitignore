@@ -1,3 +1,15 @@
 /target
 /.venv
 examples/c/hello
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Node
+node_modules/
+package-lock.json
+
+# Lock files (generated)
+uv.lock
