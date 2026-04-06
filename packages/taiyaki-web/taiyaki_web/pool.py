@@ -24,7 +24,12 @@ class RuntimePool:
         self._runtimes: list[JsRuntime] = []
         self._queue: asyncio.Queue[JsRuntime] = asyncio.Queue()
         self._component_js: dict[str, str] = {}  # name → pre-transpiled JS
+        self._dependencies: list[str] = []
         self._initialized = False
+
+    def set_dependencies(self, packages: list[str]) -> None:
+        """Set npm dependencies to install on each runtime at initialization."""
+        self._dependencies = packages
 
     def initialize(self) -> None:
         """Create all runtime instances and populate the queue."""
@@ -32,6 +37,8 @@ class RuntimePool:
             return
         for _ in range(self._pool_size):
             rt = JsRuntime(renderer=self._renderer)
+            if self._dependencies:
+                rt.rt.install_dependencies(self._dependencies)
             for name, js_code in self._component_js.items():
                 rt.load_component_js(name, js_code)
             self._runtimes.append(rt)

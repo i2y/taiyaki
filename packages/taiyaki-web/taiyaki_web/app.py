@@ -45,6 +45,7 @@ class Taiyaki:
         dev_mode: bool = False,
         pool_size: int = 1,
         renderer: str = "preact",
+        dependencies: list[str] | None = None,
     ) -> None:
         if renderer not in RENDERERS:
             raise ValueError(
@@ -58,6 +59,12 @@ class Taiyaki:
 
             self._pool = RuntimePool(pool_size=pool_size, renderer=renderer)
         self._runtime = JsRuntime(renderer=renderer) if not self._pool else None
+        self._dependencies = dependencies or []
+        if self._dependencies:
+            if self._pool:
+                self._pool.set_dependencies(self._dependencies)
+            elif self._runtime:
+                self._runtime.rt.install_dependencies(self._dependencies)
         self._routes: list[Route] = []
         self._components_dir = Path(components_dir)
         self._islands_dir = Path(islands_dir)

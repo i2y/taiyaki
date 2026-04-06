@@ -1,3 +1,5 @@
+mod deps;
+
 use pyo3::IntoPyObject;
 use pyo3::prelude::*;
 
@@ -548,6 +550,41 @@ impl AsyncRuntime {
             rt.block_on(taiyaki_node_polyfill::register_all_async(engine))
         })?
         .map_err(engine_err)
+    }
+
+    /// Install npm packages and make them available as globals.
+    ///
+    /// Packages are specified as `"name"` or `"name@version"`.
+    /// Fetched directly from npm — no npm/bun CLI required.
+    /// Results are cached in `~/.cache/taiyaki/deps/`.
+    fn install_dependencies(&self, py: Python<'_>, packages: Vec<String>) -> PyResult<()> {
+        // Fetch + bundle (runs on a tokio runtime for async HTTP)
+        let bundle = {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+            py.allow_threads(|| {
+                rt.block_on(deps::install_and_bundle(&packages))
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+            })?
+        };
+
+        if bundle.is_empty() {
+            return Ok(());
+        }
+
+        // Evaluate the bundle in the JS engine
+        self.send_sync(py, move |engine, rt| rt.block_on(engine.eval(&bundle)))?
+            .map_err(engine_err)?;
+        Ok(())
+    }
+
+    /// Clear cached dependency bundles.
+    #[staticmethod]
+    fn clear_dependency_cache() -> PyResult<()> {
+        deps::clear_cache()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 }
 
