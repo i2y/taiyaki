@@ -29,9 +29,10 @@ cargo install taiyaki-cli --no-default-features --features jsc
 ### Python (PyPI)
 
 ```bash
-pip install taiyaki          # QuickJS backend
-pip install taiyaki-jsc      # JavaScriptCore backend
-pip install taiyaki-web      # Web framework
+pip install taiyaki              # QuickJS backend
+pip install taiyaki-jsc          # JavaScriptCore backend
+pip install taiyaki-web[quickjs] # Web framework (QuickJS)
+pip install taiyaki-web[jsc]     # Web framework (JSC)
 ```
 
 ## Architecture
