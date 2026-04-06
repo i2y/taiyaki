@@ -144,9 +144,13 @@ pub async fn start_repl() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Dot commands
                 if trimmed.starts_with('.') {
-                    if handle_dot_command(trimmed, &engine, &rl, is_tty).await {
-                        let _ = rl.add_history_entry(trimmed);
-                        continue;
+                    match handle_dot_command(trimmed, &engine, &rl, is_tty).await {
+                        Some(false) => break, // .exit
+                        Some(true) => {
+                            let _ = rl.add_history_entry(trimmed);
+                            continue;
+                        }
+                        None => {} // not a dot command, fall through to eval
                     }
                 }
 
@@ -234,27 +238,30 @@ fn collect_multiline(rl: &mut Editor<ReplHelper, rustyline::history::DefaultHist
 
 // ── Dot commands ──
 
+/// Returns `Some(true)` if the command was handled and the loop should continue,
+/// `Some(false)` if `.exit` was called and the loop should break,
+/// `None` if the input was not a dot command.
 async fn handle_dot_command(
     line: &str,
     engine: &crate::Engine,
     rl: &Editor<ReplHelper, rustyline::history::DefaultHistory>,
     is_tty: bool,
-) -> bool {
+) -> Option<bool> {
     let parts: Vec<&str> = line.splitn(2, ' ').collect();
     let cmd = parts[0];
     let arg = parts.get(1).map(|s| s.trim()).unwrap_or("");
 
     match cmd {
-        ".exit" | ".quit" => std::process::exit(0),
+        ".exit" | ".quit" => return Some(false),
         ".help" => {
             print_help(is_tty);
-            true
+            Some(true)
         }
         ".clear" => {
             if is_tty {
                 print!("\x1b[2J\x1b[H");
             }
-            true
+            Some(true)
         }
         ".type" => {
             if arg.is_empty() {
@@ -273,7 +280,7 @@ async fn handle_dot_command(
                     Err(e) => print_error(&e.to_string(), is_tty),
                 }
             }
-            true
+            Some(true)
         }
         ".load" => {
             if arg.is_empty() {
@@ -289,7 +296,7 @@ async fn handle_dot_command(
                     Err(e) => print_error(&format!("Cannot read '{arg}': {e}"), is_tty),
                 }
             }
-            true
+            Some(true)
         }
         ".history" => {
             let history = rl.history();
@@ -304,9 +311,9 @@ async fn handle_dot_command(
                     }
                 }
             }
-            true
+            Some(true)
         }
-        _ => false,
+        _ => None,
     }
 }
 
