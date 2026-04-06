@@ -1,15 +1,75 @@
 use std::io::IsTerminal;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use rustyline::DefaultEditor;
+use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
+use rustyline::history::History;
+use rustyline::{Context, Editor, Helper, Highlighter, Hinter, Validator};
 use taiyaki_core::engine::JsValue;
 use taiyaki_core::permissions::Permissions;
 
 const LOGO_LINE1: &str = "  ╺┳╸┏━┓╻╻ ╻┏━┓╻┏╸╻";
 const LOGO_LINE2: &str = "   ┃ ┣━┫┃┗┳┛┣━┫┣┻┓┃";
 const LOGO_LINE3: &str = "   ╹ ╹ ╹╹ ╹ ╹ ╹╹ ╹╹";
+const FISH: &str = "><>";
+
+// ── Tab completion ──
+
+#[derive(Helper, Hinter, Highlighter, Validator)]
+struct ReplHelper {
+    globals: Arc<Mutex<Vec<String>>>,
+}
+
+impl Completer for ReplHelper {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Pair>)> {
+        let input = &line[..pos];
+
+        // Find the start of the current identifier
+        let start = input
+            .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let prefix = &input[start..];
+
+        if prefix.is_empty() {
+            return Ok((start, vec![]));
+        }
+
+        let globals = self.globals.lock().unwrap();
+        let mut matches: Vec<Pair> = globals
+            .iter()
+            .filter(|g| g.starts_with(prefix))
+            .take(20)
+            .map(|g| Pair {
+                display: g.clone(),
+                replacement: g.clone(),
+            })
+            .collect();
+        matches.sort_by(|a, b| a.display.cmp(&b.display));
+
+        Ok((start, matches))
+    }
+}
+
+/// Refresh the cached list of global variable names from the JS engine.
+async fn refresh_globals(engine: &crate::Engine, globals: &Arc<Mutex<Vec<String>>>) {
+    let code = "JSON.stringify(Object.getOwnPropertyNames(globalThis))";
+    if let Ok(JsValue::String(json)) = engine.eval(code).await {
+        if let Ok(names) = serde_json::from_str::<Vec<String>>(&json) {
+            *globals.lock().unwrap() = names;
+        }
+    }
+}
+
+// ── REPL entry point ──
 
 pub async fn start_repl() -> Result<(), Box<dyn std::error::Error>> {
     let is_tty = std::io::stdout().is_terminal();
@@ -19,7 +79,15 @@ pub async fn start_repl() -> Result<(), Box<dyn std::error::Error>> {
     crate::async_builtins::register_all(&engine, &perms).await?;
     taiyaki_node_polyfill::register_all_async(&engine).await?;
 
-    let mut rl = DefaultEditor::new()?;
+    let globals = Arc::new(Mutex::new(Vec::new()));
+    refresh_globals(&engine, &globals).await;
+
+    let helper = ReplHelper {
+        globals: Arc::clone(&globals),
+    };
+    let mut rl = Editor::new()?;
+    rl.set_helper(Some(helper));
+
     let history_path = std::env::var("HOME")
         .ok()
         .map(|h| std::path::PathBuf::from(h).join(".taiyaki_history"));
@@ -30,7 +98,9 @@ pub async fn start_repl() -> Result<(), Box<dyn std::error::Error>> {
     // Welcome
     if is_tty {
         println!();
-        println!("\x1b[35m{LOGO_LINE1}\x1b[0m");
+        println!(
+            "\x1b[35m{LOGO_LINE1}\x1b[0m  \x1b[36m{FISH}\x1b[0m"
+        );
         println!("\x1b[35m{LOGO_LINE2}\x1b[0m");
         println!("\x1b[35m{LOGO_LINE3}\x1b[0m");
         println!(
@@ -74,7 +144,7 @@ pub async fn start_repl() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Dot commands
                 if trimmed.starts_with('.') {
-                    if handle_dot_command(trimmed, &engine, is_tty).await {
+                    if handle_dot_command(trimmed, &engine, &rl, is_tty).await {
                         let _ = rl.add_history_entry(trimmed);
                         continue;
                     }
@@ -82,6 +152,9 @@ pub async fn start_repl() -> Result<(), Box<dyn std::error::Error>> {
 
                 let _ = rl.add_history_entry(&line);
                 eval_and_print(&engine, trimmed, is_tty).await;
+
+                // Update completions after each eval
+                refresh_globals(&engine, &globals).await;
             }
             Err(ReadlineError::Interrupted) => continue,
             Err(ReadlineError::Eof) => break,
@@ -101,7 +174,6 @@ pub async fn start_repl() -> Result<(), Box<dyn std::error::Error>> {
 // ── Multi-line input ──
 
 fn needs_continuation(input: &str) -> bool {
-    // Check bracket balance
     let mut braces = 0i32;
     let mut parens = 0i32;
     let mut brackets = 0i32;
@@ -136,22 +208,20 @@ fn needs_continuation(input: &str) -> bool {
         return true;
     }
 
-    // Trailing continuation tokens
     let trimmed = input.trim_end();
-    let ends_with_continuation = [",", "=>", "||", "&&", "?", "+", "-", "\\"]
+    [",", "=>", "||", "&&", "?", "+", "-", "\\"]
         .iter()
-        .any(|tok| trimmed.ends_with(tok));
-    ends_with_continuation
+        .any(|tok| trimmed.ends_with(tok))
 }
 
-fn collect_multiline(rl: &mut DefaultEditor, first_line: &str, cont_prompt: &str) -> String {
+fn collect_multiline(rl: &mut Editor<ReplHelper, rustyline::history::DefaultHistory>, first_line: &str, cont_prompt: &str) -> String {
     let mut buf = first_line.to_string();
     while needs_continuation(&buf) {
         match rl.readline(cont_prompt) {
             Ok(next) => {
                 let next = next.trim_end();
                 if next.is_empty() {
-                    break; // empty line forces execution
+                    break;
                 }
                 buf.push('\n');
                 buf.push_str(next);
@@ -164,7 +234,12 @@ fn collect_multiline(rl: &mut DefaultEditor, first_line: &str, cont_prompt: &str
 
 // ── Dot commands ──
 
-async fn handle_dot_command(line: &str, engine: &crate::Engine, is_tty: bool) -> bool {
+async fn handle_dot_command(
+    line: &str,
+    engine: &crate::Engine,
+    rl: &Editor<ReplHelper, rustyline::history::DefaultHistory>,
+    is_tty: bool,
+) -> bool {
     let parts: Vec<&str> = line.splitn(2, ' ').collect();
     let cmd = parts[0];
     let arg = parts.get(1).map(|s| s.trim()).unwrap_or("");
@@ -216,6 +291,21 @@ async fn handle_dot_command(line: &str, engine: &crate::Engine, is_tty: bool) ->
             }
             true
         }
+        ".history" => {
+            let history = rl.history();
+            let len = history.len();
+            let start = len.saturating_sub(20);
+            for i in start..len {
+                if let Ok(Some(entry)) = history.get(i, rustyline::history::SearchDirection::Forward) {
+                    if is_tty {
+                        println!("  \x1b[2m{:>3}\x1b[0m  {}", i + 1, entry.entry);
+                    } else {
+                        println!("{:>3}  {}", i + 1, entry.entry);
+                    }
+                }
+            }
+            true
+        }
         _ => false,
     }
 }
@@ -224,34 +314,32 @@ fn print_help(is_tty: bool) {
     if is_tty {
         println!();
         println!("  \x1b[1;35mCommands\x1b[0m");
-        println!("  \x1b[33m.help\x1b[0m       Show this help");
-        println!("  \x1b[33m.exit\x1b[0m       Exit the REPL");
-        println!("  \x1b[33m.clear\x1b[0m      Clear the screen");
-        println!("  \x1b[33m.type\x1b[0m \x1b[2m<expr>\x1b[0m  Show the type of an expression");
-        println!("  \x1b[33m.load\x1b[0m \x1b[2m<file>\x1b[0m  Load and execute a file");
+        println!("  \x1b[33m.help\x1b[0m          Show this help");
+        println!("  \x1b[33m.exit\x1b[0m          Exit the REPL");
+        println!("  \x1b[33m.clear\x1b[0m         Clear the screen");
+        println!("  \x1b[33m.type\x1b[0m \x1b[2m<expr>\x1b[0m   Show the type of an expression");
+        println!("  \x1b[33m.load\x1b[0m \x1b[2m<file>\x1b[0m   Load and execute a file");
+        println!("  \x1b[33m.history\x1b[0m       Show recent history");
         println!();
-        println!("  \x1b[2mMulti-line: unclosed brackets auto-continue.\x1b[0m");
-        println!("  \x1b[2mEmpty line in multi-line mode forces execution.\x1b[0m");
+        println!("  \x1b[2mTab          Auto-complete global names\x1b[0m");
+        println!("  \x1b[2mMulti-line   Unclosed brackets auto-continue\x1b[0m");
         println!();
     } else {
-        println!(".help       Show this help");
-        println!(".exit       Exit the REPL");
-        println!(".clear      Clear the screen");
-        println!(".type <expr>  Show type of expression");
-        println!(".load <file>  Load and execute a file");
+        println!(".help          Show this help");
+        println!(".exit          Exit the REPL");
+        println!(".clear         Clear the screen");
+        println!(".type <expr>   Show type of expression");
+        println!(".load <file>   Load and execute a file");
+        println!(".history       Show recent history");
     }
 }
 
 // ── Eval & print ──
 
 async fn eval_and_print(engine: &crate::Engine, code: &str, is_tty: bool) {
-    // Try as expression first (captures the return value)
     let wrapped = format!("globalThis.__repl_last = (function(){{ return ({code}); }})()");
     match engine.eval_async(&wrapped).await {
         Ok(val) => {
-            // If the input is a declaration, also eval directly so it
-            // registers in the global scope (the wrapper only captures
-            // the value without creating a global binding).
             let trimmed = code.trim();
             if trimmed.starts_with("function ")
                 || trimmed.starts_with("async function ")
@@ -270,7 +358,6 @@ async fn eval_and_print(engine: &crate::Engine, code: &str, is_tty: bool) {
             }
         }
         Err(_) => {
-            // Expression failed — run as statement (let/const/if/for/etc.)
             match engine.eval_async(code).await {
                 Ok(val) => match &val {
                     JsValue::Undefined => {}
