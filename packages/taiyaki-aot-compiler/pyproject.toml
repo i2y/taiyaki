@@ -1,6 +1,6 @@
 [project]
 name = "taiyaki-aot-compiler"
-version = "0.1.0"
+version = "0.2.0"
 description = "JavaScript/TypeScript AOT compiler via LLVM"
 requires-python = ">=3.12"
 dependencies = ["llvmlite>=0.44", "rich>=13.0", "tree-sitter>=0.24", "tree-sitter-javascript>=0.23", "tree-sitter-typescript>=0.23"]

@@ -1,6 +1,6 @@
 [package]
 name = "taiyaki-node-polyfill"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2024"
 description = "Node.js compatibility polyfills for taiyaki runtime"
 license = "MIT"
@@ -17,7 +17,7 @@ jsc = ["taiyaki-core/jsc"]
 futures = ["quickjs", "taiyaki-core/futures"]
 
 [dependencies]
-taiyaki-core = { version = "0.1.4", path = "../taiyaki-core", default-features = false }
+taiyaki-core = { version = "0.2.0", path = "../taiyaki-core", default-features = false }
 base64 = "0.22"
 serde_json = "1"
 getrandom = "0.2"
