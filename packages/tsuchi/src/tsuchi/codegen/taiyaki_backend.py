@@ -35,15 +35,15 @@ def _find_taiyaki_root() -> Path:
 
 
 def _find_taiyaki_lib() -> Path:
-    """Find the taiyaki-core static library."""
+    """Find the taiyaki-runtime static library."""
     root = _find_taiyaki_root()
-    # Try release first, then debug
     for profile in ("release", "debug"):
-        lib = root / "target" / profile / "libtaiyaki_core.a"
+        lib = root / "target" / profile / "libtaiyaki_runtime.a"
         if lib.exists():
             return lib
     raise RuntimeError(
-        "Cannot find libtaiyaki_core.a. Run `cargo build --release -p taiyaki-core` first."
+        "Cannot find libtaiyaki_runtime.a. "
+        "Run `cargo build --release -p taiyaki-runtime --no-default-features --features jsc` first."
     )
 
 
@@ -56,56 +56,44 @@ class TaiyakiBackend(BackendBase):
         return all_numeric and isinstance(func.return_type, (NumberType, BooleanType, VoidType))
 
     def _engine_headers(self) -> list[str]:
-        return ['#include "taiyaki.h"']
+        return ['#include "taiyaki_runtime.h"']
 
     def _engine_include_flags(self) -> list[str]:
         root = _find_taiyaki_root()
-        include_dir = root / "crates" / "taiyaki-core" / "include"
+        include_dir = root / "crates" / "taiyaki-runtime" / "include"
         return [f"-I{include_dir}"]
 
     def _engine_link_flags(self) -> list[str]:
         lib_path = _find_taiyaki_lib()
         lib_dir = lib_path.parent
-        flags = [f"-L{lib_dir}", "-ltaiyaki_core"]
+        flags = [f"-L{lib_dir}", "-ltaiyaki_runtime"]
         if platform.system() == "Darwin":
-            flags.extend(["-framework", "Security", "-framework", "CoreFoundation"])
+            flags.extend([
+                "-framework", "JavaScriptCore",
+                "-framework", "Security",
+                "-framework", "CoreFoundation",
+                "-framework", "CoreServices",
+                "-framework", "SystemConfiguration",
+                "-liconv", "-lresolv",
+            ])
         return flags
 
     def _engine_global_state(self, has_fallbacks: bool) -> list[str]:
-        lines = ['static struct LibtsRuntime *_tsuchi_rt = NULL;']
+        lines = ['static struct TaiyakiFullRuntime *_tsuchi_rt = NULL;']
         if has_fallbacks:
             lines.append('')
         return lines
 
     def _engine_console_log(self) -> list[str]:
-        # Register a __print host function via the taiyaki C ABI
-        return [
-            '/* __print host function for console.log */',
-            'static struct LibtsValue *_taiyaki_print_fn(',
-            '    const struct LibtsValue *const *args, uintptr_t argc, void *user_data) {',
-            '    for (uintptr_t i = 0; i < argc; i++) {',
-            '        uintptr_t slen = 0;',
-            '        const char *s = taiyaki_value_as_string((struct LibtsValue *)args[i], &slen);',
-            '        if (s) printf("%s", s);',
-            '    }',
-            '    return taiyaki_value_undefined();',
-            '}',
-            '',
-        ]
+        # Full runtime provides console.log via bootstrap_engine
+        return ['/* console.log provided by taiyaki full runtime */']
 
     def _generate_fallback_bridges(self, hir_module: HIRModule) -> list[str]:
-        """Generate C bridge functions using taiyaki fast-call API."""
-        lines = ['/* Fallback bridge functions (taiyaki C ABI) */']
-
-        # Declare cached function handles
-        for name in hir_module.fallback_signatures:
-            lines.append(f'static struct LibtsValue *_tsuchi_fn_{name} = NULL;')
-        if hir_module.fallback_signatures:
-            lines.append('')
+        """Generate C bridge functions that call JS fallback via full runtime eval."""
+        lines = ['/* Fallback bridge functions (eval-based, full runtime) */']
 
         for name, info in hir_module.fallback_signatures.items():
             ret_hint = info.return_type_hint
-            # C return type
             if ret_hint == "string":
                 c_ret = "const char*"
             elif ret_hint == "boolean":
@@ -121,53 +109,36 @@ class TaiyakiBackend(BackendBase):
 
             lines.append(f'{c_ret} _tsuchi_fb_{name}({params_c}) {{')
 
-            if info.param_count > 0 and ret_hint not in ("string", "void"):
-                # Fast path: use taiyaki_call_fast_f64
-                lines.append(f'    double args[{info.param_count}];')
+            # Build JS call string: "funcName(arg0, arg1, ...)"
+            args_js = ", ".join(f'\" + snprintf_buf + \"' for i in range(info.param_count))
+            if info.param_count > 0:
+                lines.append(f'    char buf[256];')
+                arg_parts = []
                 for i in range(info.param_count):
-                    lines.append(f'    args[{i}] = arg{i};')
-                if ret_hint == "boolean":
-                    lines.append(f'    double r = taiyaki_call_fast_f64(_tsuchi_rt, _tsuchi_fn_{name}, args, {info.param_count});')
-                    lines.append('    return (int)r;')
-                else:
-                    lines.append(f'    return taiyaki_call_fast_f64(_tsuchi_rt, _tsuchi_fn_{name}, args, {info.param_count});')
-            elif info.param_count == 0 and ret_hint not in ("string", "void"):
-                # No args, numeric return
-                if ret_hint == "boolean":
-                    lines.append(f'    double r = taiyaki_call_fast_f64(_tsuchi_rt, _tsuchi_fn_{name}, NULL, 0);')
-                    lines.append('    return (int)r;')
-                else:
-                    lines.append(f'    return taiyaki_call_fast_f64(_tsuchi_rt, _tsuchi_fn_{name}, NULL, 0);')
+                    arg_parts.append(f'arg{i}')
+                # Build the call expression dynamically
+                lines.append(f'    int n = snprintf(buf, sizeof(buf), "{name}('
+                             + ', '.join(['%g'] * info.param_count)
+                             + ')", ' + ', '.join(f'arg{i}' for i in range(info.param_count)) + ');')
             else:
-                # Generic path: use cached handle + taiyaki_call for string/void returns
+                lines.append(f'    char buf[64];')
+                lines.append(f'    int n = snprintf(buf, sizeof(buf), "{name}()");')
+
+            if ret_hint == "void":
+                lines.append('    taiyaki_full_runtime_eval(_tsuchi_rt, buf, (uintptr_t)n);')
+            else:
+                lines.append(f'    {c_ret} ret = ({c_ret})taiyaki_full_runtime_get_global(_tsuchi_rt, "__fb_result", 11);')
+                # Wrap in assignment: __fb_result = funcName(...)
                 if info.param_count > 0:
-                    lines.append(f'    const struct LibtsValue *fb_args[{info.param_count}];')
-                    for i in range(info.param_count):
-                        lines.append(f'    fb_args[{i}] = taiyaki_value_number(arg{i});')
-                    lines.append(f'    struct LibtsValue *result = taiyaki_call(_tsuchi_rt, _tsuchi_fn_{name}, fb_args, {info.param_count});')
-                    for i in range(info.param_count):
-                        lines.append(f'    taiyaki_value_free((struct LibtsValue *)fb_args[{i}]);')
+                    lines.append(f'    char buf2[300];')
+                    lines.append(f'    int n2 = snprintf(buf2, sizeof(buf2), "__fb_result = %s", buf);')
+                    lines.append('    taiyaki_full_runtime_eval(_tsuchi_rt, buf2, (uintptr_t)n2);')
                 else:
-                    lines.append(f'    struct LibtsValue *result = taiyaki_call(_tsuchi_rt, _tsuchi_fn_{name}, NULL, 0);')
-                if ret_hint == "string":
-                    lines.append('    const char *s = "";')
-                    lines.append('    if (result) {')
-                    lines.append('        uintptr_t slen = 0;')
-                    lines.append('        const char *tmp = taiyaki_value_as_string(result, &slen);')
-                    lines.append('        if (tmp) {')
-                    lines.append('            char *copy = (char*)malloc(strlen(tmp) + 1);')
-                    lines.append('            strcpy(copy, tmp);')
-                    lines.append('            s = copy;')
-                    lines.append('        }')
-                    lines.append('        taiyaki_value_free(result);')
-                    lines.append('    }')
-                    lines.append('    return s;')
-                elif ret_hint == "void":
-                    lines.append('    if (result) taiyaki_value_free(result);')
-                else:
-                    lines.append('    double ret = 0.0;')
-                    lines.append('    if (result) { ret = taiyaki_value_as_number(result); taiyaki_value_free(result); }')
-                    lines.append('    return ret;')
+                    lines.append(f'    char buf2[128];')
+                    lines.append(f'    int n2 = snprintf(buf2, sizeof(buf2), "__fb_result = {name}()");')
+                    lines.append('    taiyaki_full_runtime_eval(_tsuchi_rt, buf2, (uintptr_t)n2);')
+                lines.append(f'    ret = ({c_ret})taiyaki_full_runtime_get_global(_tsuchi_rt, "__fb_result", 11);')
+                lines.append('    return ret;')
 
             lines.append('}')
             lines.append('')
@@ -175,71 +146,26 @@ class TaiyakiBackend(BackendBase):
         return lines
 
     def _generate_wrapper(self, func: HIRFunction) -> list[str]:
-        """Generate a taiyaki fast-fn wrapper for an AOT-compiled function."""
+        """Generate a TaiyakiAotFnF64 wrapper for an AOT-compiled function."""
         lines = []
-
-        if self._is_fast_f64(func):
-            # Fast path: TaiyakiFastFnF64 callback
-            lines.append(
-                f'static double tsuchi_wrap_{func.name}(const double *args, '
-                f'uintptr_t argc, void *user_data) {{'
-            )
-            args_str = ", ".join(
-                f'({"int" if isinstance(p.type, BooleanType) else ""})(args[{i}])'
-                if isinstance(p.type, BooleanType)
-                else f'args[{i}]'
-                for i, p in enumerate(func.params)
-            )
-            if isinstance(func.return_type, VoidType):
-                lines.append(f'    _tsuchi_{func.name}({args_str});')
-                lines.append('    return 0.0;')
-            elif isinstance(func.return_type, BooleanType):
-                lines.append(f'    int result = _tsuchi_{func.name}({args_str});')
-                lines.append('    return (double)result;')
-            else:
-                lines.append(f'    return _tsuchi_{func.name}({args_str});')
-            lines.append('}')
+        lines.append(
+            f'static double tsuchi_wrap_{func.name}(const double *args, '
+            f'uintptr_t argc, void *user_data) {{'
+        )
+        args_str = ", ".join(
+            f'(int)(args[{i}])' if isinstance(p.type, BooleanType)
+            else f'args[{i}]'
+            for i, p in enumerate(func.params)
+        )
+        if isinstance(func.return_type, VoidType):
+            lines.append(f'    _tsuchi_{func.name}({args_str});')
+            lines.append('    return 0.0;')
+        elif isinstance(func.return_type, BooleanType):
+            lines.append(f'    int result = _tsuchi_{func.name}({args_str});')
+            lines.append('    return (double)result;')
         else:
-            # Generic path: LibtsHostFn callback
-            lines.append(
-                f'static struct LibtsValue *tsuchi_wrap_{func.name}('
-                f'const struct LibtsValue *const *args, uintptr_t argc, void *user_data) {{'
-            )
-            # Extract args
-            call_args = []
-            for i, p in enumerate(func.params):
-                if isinstance(p.type, NumberType):
-                    lines.append(f'    double arg_{i} = taiyaki_value_as_number(args[{i}]);')
-                    call_args.append(f'arg_{i}')
-                elif isinstance(p.type, BooleanType):
-                    lines.append(f'    int arg_{i} = taiyaki_value_as_bool(args[{i}]);')
-                    call_args.append(f'arg_{i}')
-                elif isinstance(p.type, StringType):
-                    lines.append(f'    uintptr_t _slen_{i} = 0;')
-                    lines.append(f'    const char *arg_{i} = taiyaki_value_as_string((struct LibtsValue *)args[{i}], &_slen_{i});')
-                    call_args.append(f'arg_{i}')
-                else:
-                    lines.append(f'    double arg_{i} = taiyaki_value_as_number(args[{i}]);')
-                    call_args.append(f'arg_{i}')
-
-            args_str = ", ".join(call_args)
-            if isinstance(func.return_type, VoidType):
-                lines.append(f'    _tsuchi_{func.name}({args_str});')
-                lines.append('    return taiyaki_value_undefined();')
-            elif isinstance(func.return_type, NumberType):
-                lines.append(f'    double result = _tsuchi_{func.name}({args_str});')
-                lines.append('    return taiyaki_value_number(result);')
-            elif isinstance(func.return_type, BooleanType):
-                lines.append(f'    int result = _tsuchi_{func.name}({args_str});')
-                lines.append('    return taiyaki_value_bool(result);')
-            elif isinstance(func.return_type, StringType):
-                lines.append(f'    const char *result = _tsuchi_{func.name}({args_str});')
-                lines.append('    return taiyaki_value_string(result, strlen(result));')
-            else:
-                lines.append(f'    double result = _tsuchi_{func.name}({args_str});')
-                lines.append('    return taiyaki_value_number(result);')
-            lines.append('}')
-
+            lines.append(f'    return _tsuchi_{func.name}({args_str});')
+        lines.append('}')
         return lines
 
     def _generate_resize_callback(self, exported_funcs: list[HIRFunction]) -> list[str]:
@@ -265,45 +191,11 @@ class TaiyakiBackend(BackendBase):
         lines.append('    tsuchi_argv = argv;')
         lines.append('')
 
-        if has_async:
-            lines.append('    tsuchi_loop_init();')
-            lines.append('')
-
-        # Initialize taiyaki runtime
-        lines.append('    _tsuchi_rt = taiyaki_runtime_new();')
+        # Initialize full runtime (tokio + JSC/QuickJS + all builtins + polyfills)
+        lines.append('    _tsuchi_rt = taiyaki_full_runtime_new(argc, (const char *const *)argv);')
         lines.append('    if (!_tsuchi_rt) {')
         lines.append('        fprintf(stderr, "Failed to initialize taiyaki runtime\\n");')
         lines.append('        return 1;')
-        lines.append('    }')
-        lines.append('')
-
-        # Register console.log as a C host function
-        lines.append('    taiyaki_register_fn(_tsuchi_rt, "__tsuchi_log", 12, _taiyaki_print_fn, NULL);')
-        lines.append('    {')
-        console_js = (
-            'globalThis.console = {'
-            'log: function() {'
-            'var s = "";'
-            'for (var i = 0; i < arguments.length; i++) {'
-            'if (i > 0) s += " ";'
-            'var v = arguments[i];'
-            'if (typeof v === "number") {'
-            'if (v === (v|0) && v >= -1e15 && v <= 1e15) s += String(v|0);'
-            'else s += String(v);'
-            '} else if (typeof v === "boolean") s += v ? "true" : "false";'
-            'else if (v === null) s += "null";'
-            'else if (v === undefined) s += "undefined";'
-            'else s += String(v);'
-            '}'
-            '__tsuchi_log(s + "\\n");'
-            '},'
-            'error: function(){console.log.apply(null, arguments);},'
-            'warn: function(){console.log.apply(null, arguments);}'
-            '};'
-        )
-        c_escaped = self._escape_c_string(console_js)
-        lines.append(f'        static const char _console_js[] = "{c_escaped}";')
-        lines.append('        taiyaki_eval(_tsuchi_rt, _console_js, sizeof(_console_js) - 1);')
         lines.append('    }')
         lines.append('')
 
@@ -313,30 +205,17 @@ class TaiyakiBackend(BackendBase):
                 src = "\\n".join(self._escape_c_string(line) for line in src_lines)
                 lines.append('    {')
                 lines.append(f'        static const char _fb_{name}[] = "{src}";')
-                lines.append(f'        taiyaki_eval(_tsuchi_rt, _fb_{name}, sizeof(_fb_{name}) - 1);')
+                lines.append(f'        taiyaki_full_runtime_eval(_tsuchi_rt, _fb_{name}, sizeof(_fb_{name}) - 1);')
                 lines.append('    }')
-            lines.append('')
-
-            # Cache fallback function handles
-            for name in hir_module.fallback_signatures:
-                lines.append(
-                    f'    _tsuchi_fn_{name} = taiyaki_get_global(_tsuchi_rt, "{name}", {len(name)});'
-                )
             lines.append('')
 
         # Register AOT-compiled functions
         for func in exported_funcs:
             nparams = len(func.params)
-            if self._is_fast_f64(func):
-                lines.append(
-                    f'    taiyaki_register_fast_fn_f64(_tsuchi_rt, "{func.name}", {len(func.name)}, '
-                    f'tsuchi_wrap_{func.name}, {nparams}, NULL);'
-                )
-            else:
-                lines.append(
-                    f'    taiyaki_register_fn(_tsuchi_rt, "{func.name}", {len(func.name)}, '
-                    f'tsuchi_wrap_{func.name}, NULL);'
-                )
+            lines.append(
+                f'    taiyaki_full_runtime_register_fn_f64(_tsuchi_rt, "{func.name}", {len(func.name)}, '
+                f'tsuchi_wrap_{func.name}, {nparams}, NULL);'
+            )
 
         # Register import aliases
         if hir_module.func_aliases:
@@ -346,42 +225,26 @@ class TaiyakiBackend(BackendBase):
             for func in exported_funcs:
                 for alias in reverse_aliases.get(func.name, []):
                     if alias != func.name:
-                        if self._is_fast_f64(func):
-                            lines.append(
-                                f'    taiyaki_register_fast_fn_f64(_tsuchi_rt, "{alias}", {len(alias)}, '
-                                f'tsuchi_wrap_{func.name}, {len(func.params)}, NULL);'
-                            )
-                        else:
-                            lines.append(
-                                f'    taiyaki_register_fn(_tsuchi_rt, "{alias}", {len(alias)}, '
-                                f'tsuchi_wrap_{func.name}, NULL);'
-                            )
+                        lines.append(
+                            f'    taiyaki_full_runtime_register_fn_f64(_tsuchi_rt, "{alias}", {len(alias)}, '
+                            f'tsuchi_wrap_{func.name}, {len(func.params)}, NULL);'
+                        )
         lines.append('')
 
-        # Execute async entry calls directly
+        # Execute entry statements via full runtime eval
         for call_stmt in async_entry_calls:
             func_name = call_stmt.rstrip(';').rstrip('()')
             lines.append(f'    _tsuchi_{func_name}();')
 
-        # Execute JS entry statements
         for i, stmt in enumerate(js_entry_stmts):
             escaped = self._escape_c_string(stmt)
             lines.append('    {')
             lines.append(f'        static const char _entry_{i}[] = "{escaped}";')
-            lines.append(f'        taiyaki_eval(_tsuchi_rt, _entry_{i}, sizeof(_entry_{i}) - 1);')
+            lines.append(f'        taiyaki_full_runtime_eval(_tsuchi_rt, _entry_{i}, sizeof(_entry_{i}) - 1);')
             lines.append('    }')
 
-        if has_async:
-            lines.append('')
-            lines.append('    tsuchi_loop_run();')
-            lines.append('    tsuchi_loop_close();')
-
-        # Cleanup
         lines.append('')
-        if has_fallbacks:
-            for name in hir_module.fallback_signatures:
-                lines.append(f'    if (_tsuchi_fn_{name}) taiyaki_value_free(_tsuchi_fn_{name});')
-        lines.append('    taiyaki_runtime_free(_tsuchi_rt);')
+        lines.append('    taiyaki_full_runtime_free(_tsuchi_rt);')
         lines.append('    return 0;')
         lines.append('}')
 

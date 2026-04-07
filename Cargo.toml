@@ -5,6 +5,7 @@ members = [
     "crates/taiyaki-python",
     "crates/taiyaki-cli",
     "crates/taiyaki-node-polyfill",
+    "crates/taiyaki-runtime",
 ]
 default-members = [
     "crates/taiyaki-core",

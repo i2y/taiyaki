@@ -3458,6 +3458,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "taiyaki-runtime"
+version = "0.1.4"
+dependencies = [
+ "base64",
+ "futures-util",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "libc",
+ "notify",
+ "notify-debouncer-mini",
+ "reqwest",
+ "rusqlite",
+ "rustls-pemfile",
+ "rustls-pki-types",
+ "serde_json",
+ "sha1",
+ "taiyaki-core",
+ "taiyaki-node-polyfill",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
+ "tungstenite",
+ "url",
+ "webpki-roots",
+]
+
+[[package]]
 name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
