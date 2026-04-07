@@ -47,9 +47,14 @@ taiyaki-node-polyfill Optional Node.js compatibility layer
   |                    taiyaki run / eval / repl / test / build / compile ...
   |
   +-- taiyaki-python  PyO3 bindings (import taiyaki)
-        |
-        taiyaki-web   Python web framework (from taiyaki_web import Taiyaki)
-                       Starlette + Preact SSR + htmx + Islands
+  |     |
+  |     taiyaki-web   Python web framework (from taiyaki_web import Taiyaki)
+  |                    Starlette + Preact SSR + htmx + Islands
+  |
+  +-- taiyaki-runtime Static lib for AOT binaries (C ABI)
+  |
+  +-- taiyaki-aot-compiler  JS/TS AOT compiler (Python, LLVM)
+                             HM type inference → HIR (SSA) → LLVM IR → native binary
 ```
 
 ## Quick Start
@@ -190,6 +195,7 @@ export default function Counter({ initial = 0 }) {
 | `taiyaki remove <pkg>` | Remove a package |
 | `taiyaki build <entry>` | ESM to CJS bundle |
 | `taiyaki compile <entry>` | Standalone executable |
+| `taiyaki compile --aot <entry>` | AOT native binary (LLVM) |
 | `taiyaki check [paths]` | Syntax check |
 | `taiyaki fmt [paths]` | Code formatter |
 | `taiyaki lint [paths]` | Linter |
@@ -236,6 +242,29 @@ cd crates/taiyaki-python && maturin develop --no-default-features --features jsc
 cd packages/taiyaki-web && uv run python -m pytest tests/ -v
 ```
 
+### AOT Compiler
+
+The AOT compiler compiles JS/TS to standalone native binaries via LLVM. It requires building from the monorepo.
+
+**Prerequisites**: Python 3.12+, C compiler (clang), Rust toolchain
+
+```bash
+# 1. Build the taiyaki-runtime static library
+cargo build --release -p taiyaki-runtime              # QuickJS backend
+# cargo build --release -p taiyaki-runtime --features jsc --no-default-features  # JSC backend
+
+# 2. Install the AOT compiler
+cd packages/taiyaki-aot-compiler
+uv sync
+
+# 3. Compile JS/TS to native binary
+uv run taiyaki-aot compile examples/hello.js          # → ./hello
+uv run taiyaki-aot compile examples/breakout.js       # raylib game → ./breakout
+
+# Or via taiyaki CLI
+cargo run -p taiyaki-cli -- compile --aot examples/hello.js
+```
+
 ## Project Structure
 
 ```
@@ -245,6 +274,15 @@ crates/
   taiyaki-node-polyfill/  Node.js polyfills (optional)
   taiyaki-python/         PyO3 bindings
 packages/
+  taiyaki-aot-compiler/   AOT compiler (Python, LLVM)
+    src/taiyaki_aot_compiler/
+      compiler.py         Pipeline: parse → infer → HIR → LLVM → binary
+      codegen/            LLVM IR generation + Taiyaki backend
+      type_checker/       HM type inference
+      parser/             tree-sitter JS/TS parser
+      hir/                SSA-form intermediate representation
+    examples/             Game & UI demos (raylib, Clay)
+    tests/                1029 tests
   taiyaki-web/            Python web framework
     taiyaki_web/
       app.py              Taiyaki application class
