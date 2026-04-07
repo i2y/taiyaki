@@ -755,10 +755,13 @@ impl JsEngine for JscEngine {
             r#"({fn_kw}() {{
 var module = {{ exports: {{}} }};
 var exports = module.exports;
+var __module_cache = globalThis.__module_cache = globalThis.__module_cache || {{}};
 var require = function(name) {{
+  if (__module_cache[name]) return __module_cache[name].exports;
   var s = (globalThis.__builtin_sources || {{}})[name];
   if (s) {{
     var m = {{ exports: {{}} }};
+    __module_cache[name] = m;
     var fn = new Function("module", "exports", "require", s);
     fn(m, m.exports, require);
     return m.exports;
