@@ -33,6 +33,26 @@ from tsuchi.type_checker.unification import unify, UnificationError
 from tsuchi.type_checker.builtins import binary_op_type, compare_op_type, unary_op_type
 from tsuchi.diagnostics.diagnostic import DiagnosticCollector, Location as DiagLocation
 
+# Known JS/Web/runtime builtins not yet natively compiled → fallback gracefully
+_JS_BUILTINS = frozenset({
+    "eval", "arguments", "Symbol", "Reflect", "Proxy",
+    "Set", "Map", "WeakSet", "WeakMap", "WeakRef",
+    "RegExp", "Promise", "Intl", "SharedArrayBuffer",
+    "Atomics", "DataView", "ArrayBuffer", "TextEncoder",
+    "TextDecoder", "URL", "URLSearchParams", "Event",
+    "EventTarget", "AbortController", "AbortSignal",
+    "queueMicrotask", "structuredClone", "atob", "btoa",
+    "globalThis", "self", "window", "document",
+    "Request", "Response", "Headers",
+    "ReadableStream", "WritableStream", "TransformStream",
+    "Blob", "File", "FormData", "DOMException",
+    "Katana", "Taiyaki",
+    "fetch", "setTimeout", "setInterval",
+    "clearTimeout", "clearInterval",
+    "crypto", "performance",
+    "Buffer", "require",
+})
+
 
 class TypedFunction:
     """Result of type-checking a function."""
@@ -1167,30 +1187,6 @@ class JSInferrer:
             if expr.name in self._env:
                 return self._subst.apply(self._env[expr.name])
             loc = self._make_diag_loc(expr.loc, filename)
-            # Known JS builtins not yet supported natively → fallback gracefully
-            _JS_BUILTINS = frozenset({
-                "eval", "arguments", "Symbol", "Reflect", "Proxy",
-                "Set", "Map", "WeakSet", "WeakMap", "WeakRef",
-                "RegExp", "Promise", "Intl", "SharedArrayBuffer",
-                "Atomics", "DataView", "ArrayBuffer", "TextEncoder",
-                "TextDecoder", "URL", "URLSearchParams", "Event",
-                "EventTarget", "AbortController", "AbortSignal",
-                "queueMicrotask", "structuredClone", "atob", "btoa",
-                "globalThis", "self", "window", "document",
-                # Web API classes
-                "Request", "Response", "Headers",
-                "ReadableStream", "WritableStream", "TransformStream",
-                "Blob", "File", "FormData", "DOMException",
-                # Taiyaki runtime
-                "Katana", "Taiyaki",
-                # Web API functions / timers
-                "fetch", "setTimeout", "setInterval",
-                "clearTimeout", "clearInterval",
-                # Web API namespaces
-                "crypto", "performance",
-                # Node.js polyfills
-                "Buffer", "require",
-            })
             if expr.name in _JS_BUILTINS:
                 self.diag.warning(f"'{expr.name}' is not natively compiled — will use JS runtime fallback", location=loc)
                 if self._current_func_name:
