@@ -8,14 +8,13 @@ Compiled binaries get full Node.js polyfill support via taiyaki-node-polyfill.
 from __future__ import annotations
 
 import os
-import subprocess
+import platform
 from pathlib import Path
 
 from tsuchi.codegen.backend_base import BackendBase, _PROJECT_ROOT
 from tsuchi.hir.nodes import HIRModule, HIRFunction
 from tsuchi.type_checker.types import (
-    NumberType, BooleanType, StringType, VoidType, ObjectType,
-    ArrayType, FunctionType, MonoType,
+    NumberType, BooleanType, StringType, VoidType,
 )
 
 
@@ -51,6 +50,11 @@ def _find_taiyaki_lib() -> Path:
 class TaiyakiBackend(BackendBase):
     """Compiles LLVM IR + C init wrapper + taiyaki-core into a standalone binary."""
 
+    def _is_fast_f64(self, func: HIRFunction) -> bool:
+        """Check if a function can use the fast f64 path (all numeric params, numeric/void return)."""
+        all_numeric = all(isinstance(p.type, (NumberType, BooleanType)) for p in func.params)
+        return all_numeric and isinstance(func.return_type, (NumberType, BooleanType, VoidType))
+
     def _engine_headers(self) -> list[str]:
         return ['#include "taiyaki.h"']
 
@@ -63,8 +67,6 @@ class TaiyakiBackend(BackendBase):
         lib_path = _find_taiyaki_lib()
         lib_dir = lib_path.parent
         flags = [f"-L{lib_dir}", "-ltaiyaki_core"]
-        # taiyaki-core links against system frameworks on macOS
-        import platform
         if platform.system() == "Darwin":
             flags.extend(["-framework", "Security", "-framework", "CoreFoundation"])
         return flags
@@ -137,8 +139,16 @@ class TaiyakiBackend(BackendBase):
                 else:
                     lines.append(f'    return taiyaki_call_fast_f64(_tsuchi_rt, _tsuchi_fn_{name}, NULL, 0);')
             else:
-                # Generic path: use taiyaki_call_global for string/void returns
-                lines.append(f'    struct LibtsValue *result = taiyaki_call_global(_tsuchi_rt, "{name}", {len(name)}, NULL, 0);')
+                # Generic path: use cached handle + taiyaki_call for string/void returns
+                if info.param_count > 0:
+                    lines.append(f'    const struct LibtsValue *fb_args[{info.param_count}];')
+                    for i in range(info.param_count):
+                        lines.append(f'    fb_args[{i}] = taiyaki_value_number(arg{i});')
+                    lines.append(f'    struct LibtsValue *result = taiyaki_call(_tsuchi_rt, _tsuchi_fn_{name}, fb_args, {info.param_count});')
+                    for i in range(info.param_count):
+                        lines.append(f'    taiyaki_value_free((struct LibtsValue *)fb_args[{i}]);')
+                else:
+                    lines.append(f'    struct LibtsValue *result = taiyaki_call(_tsuchi_rt, _tsuchi_fn_{name}, NULL, 0);')
                 if ret_hint == "string":
                     lines.append('    const char *s = "";')
                     lines.append('    if (result) {')
@@ -168,14 +178,7 @@ class TaiyakiBackend(BackendBase):
         """Generate a taiyaki fast-fn wrapper for an AOT-compiled function."""
         lines = []
 
-        # Check if we can use the fast f64 path
-        all_numeric = all(
-            isinstance(p.type, (NumberType, BooleanType))
-            for p in func.params
-        )
-        numeric_return = isinstance(func.return_type, (NumberType, BooleanType, VoidType))
-
-        if all_numeric and numeric_return:
+        if self._is_fast_f64(func):
             # Fast path: TaiyakiFastFnF64 callback
             lines.append(
                 f'static double tsuchi_wrap_{func.name}(const double *args, '
@@ -298,8 +301,7 @@ class TaiyakiBackend(BackendBase):
             'warn: function(){console.log.apply(null, arguments);}'
             '};'
         )
-        # Escape for C string
-        c_escaped = console_js.replace('\\', '\\\\').replace('"', '\\"')
+        c_escaped = self._escape_c_string(console_js)
         lines.append(f'        static const char _console_js[] = "{c_escaped}";')
         lines.append('        taiyaki_eval(_tsuchi_rt, _console_js, sizeof(_console_js) - 1);')
         lines.append('    }')
@@ -308,10 +310,7 @@ class TaiyakiBackend(BackendBase):
         # Evaluate fallback source code
         if has_fallbacks:
             for name, src_lines in hir_module.fallback_sources.items():
-                src = "\\n".join(
-                    line.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
-                    for line in src_lines
-                )
+                src = "\\n".join(self._escape_c_string(line) for line in src_lines)
                 lines.append('    {')
                 lines.append(f'        static const char _fb_{name}[] = "{src}";')
                 lines.append(f'        taiyaki_eval(_tsuchi_rt, _fb_{name}, sizeof(_fb_{name}) - 1);')
@@ -328,10 +327,7 @@ class TaiyakiBackend(BackendBase):
         # Register AOT-compiled functions
         for func in exported_funcs:
             nparams = len(func.params)
-            all_numeric = all(isinstance(p.type, (NumberType, BooleanType)) for p in func.params)
-            numeric_return = isinstance(func.return_type, (NumberType, BooleanType, VoidType))
-
-            if all_numeric and numeric_return:
+            if self._is_fast_f64(func):
                 lines.append(
                     f'    taiyaki_register_fast_fn_f64(_tsuchi_rt, "{func.name}", {len(func.name)}, '
                     f'tsuchi_wrap_{func.name}, {nparams}, NULL);'
@@ -350,9 +346,7 @@ class TaiyakiBackend(BackendBase):
             for func in exported_funcs:
                 for alias in reverse_aliases.get(func.name, []):
                     if alias != func.name:
-                        all_numeric = all(isinstance(p.type, (NumberType, BooleanType)) for p in func.params)
-                        numeric_return = isinstance(func.return_type, (NumberType, BooleanType, VoidType))
-                        if all_numeric and numeric_return:
+                        if self._is_fast_f64(func):
                             lines.append(
                                 f'    taiyaki_register_fast_fn_f64(_tsuchi_rt, "{alias}", {len(alias)}, '
                                 f'tsuchi_wrap_{func.name}, {len(func.params)}, NULL);'
@@ -371,7 +365,7 @@ class TaiyakiBackend(BackendBase):
 
         # Execute JS entry statements
         for i, stmt in enumerate(js_entry_stmts):
-            escaped = stmt.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+            escaped = self._escape_c_string(stmt)
             lines.append('    {')
             lines.append(f'        static const char _entry_{i}[] = "{escaped}";')
             lines.append(f'        taiyaki_eval(_tsuchi_rt, _entry_{i}, sizeof(_entry_{i}) - 1);')

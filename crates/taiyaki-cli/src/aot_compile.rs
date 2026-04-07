@@ -16,12 +16,11 @@ fn find_tsuchi_dir() -> Result<std::path::PathBuf, String> {
         }
     }
 
-    // 2. Relative to executable (development layout: target/debug/taiyaki-cli -> ../../packages/tsuchi)
+    // 2. Relative to executable (development layout: target/{profile}/taiyaki -> ../../packages/tsuchi)
     if let Ok(exe) = std::env::current_exe() {
-        // exe is in target/debug/ or target/release/
-        if let Some(target_dir) = exe.parent() {
-            // Go up: target/{profile}/ -> target/ -> repo root
-            let repo_root = target_dir.join("../../..");
+        if let Some(profile_dir) = exe.parent() {
+            // profile_dir is target/{profile}/, go up 2 levels to repo root
+            let repo_root = profile_dir.join("../..");
             let tsuchi_dir = repo_root.join("packages/tsuchi");
             if tsuchi_dir.exists() {
                 return Ok(tsuchi_dir);
@@ -44,34 +43,26 @@ fn find_tsuchi_dir() -> Result<std::path::PathBuf, String> {
 
 pub fn run(entry: &Path, output: Option<&Path>) -> Result<(), String> {
     let tsuchi_dir = find_tsuchi_dir()?;
+    let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?;
 
-    // Resolve entry to absolute path so tsuchi can find it from its own cwd
     let abs_entry = if entry.is_absolute() {
         entry.to_path_buf()
     } else {
-        std::env::current_dir()
-            .map_err(|e| format!("Cannot get cwd: {e}"))?
-            .join(entry)
+        cwd.join(entry)
     };
 
-    // Default output dir to current working directory
     let output_dir = if let Some(out) = output {
-        if let Some(parent) = out.parent() {
-            if parent.as_os_str().is_empty() {
-                std::env::current_dir()
-                    .map_err(|e| format!("Cannot get cwd: {e}"))?
-            } else if parent.is_absolute() {
+        if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
+            if parent.is_absolute() {
                 parent.to_path_buf()
             } else {
-                std::env::current_dir()
-                    .map_err(|e| format!("Cannot get cwd: {e}"))?
-                    .join(parent)
+                cwd.join(parent)
             }
         } else {
-            std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?
+            cwd.clone()
         }
     } else {
-        std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?
+        cwd
     };
 
     let mut cmd = Command::new("uv");

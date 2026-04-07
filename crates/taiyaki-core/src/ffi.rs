@@ -610,18 +610,7 @@ pub unsafe extern "C" fn taiyaki_call(
             }
         };
 
-        let mut js_args = Vec::with_capacity(argc);
-        if argc > 0 && !args.is_null() {
-            for i in 0..argc {
-                let arg_ptr = unsafe { *args.add(i) };
-                if arg_ptr.is_null() {
-                    js_args.push(JsValue::Undefined);
-                } else {
-                    let arg = unsafe { &*arg_ptr };
-                    js_args.push(arg.inner.clone());
-                }
-            }
-        }
+        let js_args = unsafe { collect_args(args, argc) };
 
         match rt.engine.call_function(func_handle, &js_args) {
             Ok(val) => wrap_handle_value(val, &rt.engine),
@@ -631,6 +620,27 @@ pub unsafe extern "C" fn taiyaki_call(
             }
         }
     })
+}
+
+/// Collects C LibtsValue argument array into Vec<JsValue>.
+///
+/// # Safety
+/// `args` must point to at least `argc` valid `*const LibtsValue` pointers
+/// (or be null when `argc == 0`).
+unsafe fn collect_args(args: *const *const LibtsValue, argc: usize) -> Vec<JsValue> {
+    let mut js_args = Vec::with_capacity(argc);
+    if argc > 0 && !args.is_null() {
+        for i in 0..argc {
+            let arg_ptr = unsafe { *args.add(i) };
+            if arg_ptr.is_null() {
+                js_args.push(JsValue::Undefined);
+            } else {
+                let arg = unsafe { &*arg_ptr };
+                js_args.push(arg.inner.clone());
+            }
+        }
+    }
+    js_args
 }
 
 // --- JSON bridge ---
@@ -1028,18 +1038,7 @@ pub unsafe extern "C" fn taiyaki_call_global(
                 return ptr::null_mut();
             }
         };
-        let mut js_args = Vec::with_capacity(argc);
-        if argc > 0 && !args.is_null() {
-            for i in 0..argc {
-                let arg_ptr = unsafe { *args.add(i) };
-                if arg_ptr.is_null() {
-                    js_args.push(JsValue::Undefined);
-                } else {
-                    let arg = unsafe { &*arg_ptr };
-                    js_args.push(arg.inner.clone());
-                }
-            }
-        }
+        let js_args = unsafe { collect_args(args, argc) };
         match rt.engine.call_function(func_handle, &js_args) {
             Ok(val) => {
                 rt.engine.drop_handle(func_handle);
@@ -1065,30 +1064,32 @@ pub unsafe extern "C" fn taiyaki_call_fast_f64(
     args: *const f64,
     argc: usize,
 ) -> f64 {
-    if rt.is_null() || func.is_null() {
-        return f64::NAN;
-    }
-    let rt = unsafe { &*rt };
-    let func = unsafe { &*func };
-    let func_handle = match extract_handle(func) {
-        Some(h) => h,
-        None => return f64::NAN,
-    };
-    let mut js_args = Vec::with_capacity(argc);
-    for i in 0..argc {
-        js_args.push(JsValue::Number(unsafe { *args.add(i) }));
-    }
-    match rt.engine.call_function(func_handle, &js_args) {
-        Ok(JsValue::Number(n)) => n,
-        Ok(JsValue::Bool(b)) => {
-            if b {
-                1.0
-            } else {
-                0.0
-            }
+    ffi_guard!(f64::NAN, {
+        if rt.is_null() || func.is_null() {
+            return f64::NAN;
         }
-        _ => f64::NAN,
-    }
+        let rt = unsafe { &*rt };
+        let func = unsafe { &*func };
+        let func_handle = match extract_handle(func) {
+            Some(h) => h,
+            None => return f64::NAN,
+        };
+        // Build args on stack for small counts to avoid heap allocation
+        let js_args: Vec<JsValue> = (0..argc)
+            .map(|i| JsValue::Number(unsafe { *args.add(i) }))
+            .collect();
+        match rt.engine.call_function(func_handle, &js_args) {
+            Ok(JsValue::Number(n)) => n,
+            Ok(JsValue::Bool(b)) => {
+                if b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            _ => f64::NAN,
+        }
+    })
 }
 
 /// C callback type for fast f64 native functions (used by AOT wrappers).
@@ -1123,11 +1124,12 @@ pub unsafe extern "C" fn taiyaki_register_fast_fn_f64(
             }
         };
         let user_data_ptr = user_data as usize;
-        let _ = declared_argc; // Used by callee, not needed here
+        // declared_argc is part of the C ABI contract but not used by the trampoline
+        let _ = declared_argc;
 
         type HostFn = Box<dyn Fn(&[JsValue]) -> Result<JsValue, EngineError>>;
         let rust_callback: HostFn = Box::new(move |args: &[JsValue]| {
-            let mut f64_args: Vec<f64> = args
+            let f64_args: Vec<f64> = args
                 .iter()
                 .map(|a| match a {
                     JsValue::Number(n) => *n,
@@ -1143,7 +1145,7 @@ pub unsafe extern "C" fn taiyaki_register_fast_fn_f64(
                 .collect();
             let result = unsafe {
                 callback(
-                    f64_args.as_mut_ptr(),
+                    f64_args.as_ptr(),
                     f64_args.len(),
                     user_data_ptr as *mut c_void,
                 )
