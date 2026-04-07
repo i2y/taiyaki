@@ -126,12 +126,16 @@ def _convert_qjs_to_taiyaki(qjs_lines: list[str]) -> list[str]:
             const_js_parts.clear()
 
         # Convert RL_REG/CLAY_REG/etc macro calls
-        m = re.match(r'\s+\w+_REG\((\w+), (\w+), (\d+)\);', s)
+        m = re.match(r'\s+(\w+)_REG\((\w+), (\w+), (\d+)\);', s)
         if m:
-            js_name, c_name, nargs = m.group(1), m.group(2), m.group(3)
+            macro_prefix = m.group(1)
+            js_name, c_name, nargs = m.group(2), m.group(3), m.group(4)
+            # Map macro prefix to function prefix
+            _prefix_map = {'RL': 'rl', 'CLAY': 'clay', 'CTUI': 'clay_tui', 'UI': 'ui', 'GF': 'gf'}
+            fn_prefix = _prefix_map.get(macro_prefix, 'rl')
             out.append(
                 f'    taiyaki_full_runtime_register_fn(rt, "{js_name}", {len(js_name)}, '
-                f'taiyaki_rl_{c_name}, {nargs}, NULL);')
+                f'taiyaki_{fn_prefix}_{c_name}, {nargs}, NULL);')
             continue
 
         # Convert direct JS_SetPropertyStr + JS_NewCFunction registration
@@ -182,17 +186,24 @@ def _convert_qjs_to_taiyaki(qjs_lines: list[str]) -> list[str]:
 
         # JS_ToBool(ctx, argv[N]) → (int)args[N].number
         s = re.sub(r'JS_ToBool\(ctx, argv\[(\d+)\]\)', r'(int)args[\1].number', s)
-        # JS_ToFloat64 with declaration: "double v; JS_ToFloat64(ctx, &v, argv[N]);"
-        s = re.sub(r'double \w+;\s*JS_ToFloat64\(ctx, &\w+, argv\[(\d+)\]\)', r'args[\1].number', s)
+        # JS_ToFloat64 with declaration: "double v; JS_ToFloat64(ctx, &v, argv[N]);" → "double v = args[N].number;"
+        s = re.sub(r'double (\w+);\s*JS_ToFloat64\(ctx, &\1, argv\[(\d+)\]\)', r'double \1 = args[\2].number', s)
         # JS_ToFloat64 standalone: "JS_ToFloat64(ctx, &VAR, argv[N]);" → "VAR = args[N].number;"
         s = re.sub(r'\s*JS_ToFloat64\(ctx, &(\w+), argv\[(\d+)\]\);', r' \1 = args[\2].number;', s)
         # JS_NewObject/JS_NewInt32/JS_NewString etc. remaining patterns
         s = re.sub(r'JS_NewFloat64\(ctx, ([^)]+)\)', r'(double)(\1)', s)
         s = re.sub(r'JS_NewBool\(ctx, ([^)]+)\)', r'(double)(\1)', s)
         s = re.sub(r'JS_NewInt32\(ctx, ([^)]+)\)', r'(double)(\1)', s)
-        # JS_NewString — string returns not supported via f64, return 0.0
-        s = re.sub(r'JSValue \w+ = JS_NewString\(ctx, .+\);', '/* string return not supported via f64 */', s)
-        s = re.sub(r'return JS_NewString\(ctx, .+\);', 'return 0.0; /* string return */', s)
+        # JS_NewString — string returns not supported via f64, skip and return 0.0
+        if 'JS_NewString(ctx,' in s:
+            if s.strip().startswith('JSValue'):
+                # "JSValue ret = JS_NewString(ctx, ...);" → skip, next "return ret;" handled below
+                continue
+            elif s.strip().startswith('return JS_NewString'):
+                s = '    return 0.0; /* string return */'
+        # "return ret;" after skipped JS_NewString assignment
+        if s.strip() == 'return ret;':
+            s = '    return 0.0; /* string return */'
         # argv[N] → args[N].number (catch-all for any remaining argv references)
         s = re.sub(r'argv\[(\d+)\]', r'args[\1].number', s)
 
@@ -347,23 +358,47 @@ class TaiyakiBackend(BackendBase):
         return lines
 
     def _generate_wrapper(self, func: HIRFunction) -> list[str]:
-        """Generate a TaiyakiAotFnF64 wrapper for an AOT-compiled function."""
+        """Generate a wrapper for an AOT-compiled function.
+
+        Uses TaiyakiHostFnGeneric (TaiyakiArg *) when any param is a string,
+        otherwise uses TaiyakiAotFnF64 (double *) for the fast path.
+        """
+        has_strings = any(isinstance(p.type, StringType) for p in func.params)
         lines = []
-        lines.append(
-            f'static double tsuchi_wrap_{func.name}(const double *args, '
-            f'uintptr_t argc, void *user_data) {{'
-        )
-        args_str = ", ".join(
-            f'(int)(args[{i}])' if isinstance(p.type, BooleanType)
-            else f'args[{i}]'
-            for i, p in enumerate(func.params)
-        )
+
+        if has_strings:
+            # Generic wrapper: receives TaiyakiArg (supports strings)
+            lines.append(
+                f'static double tsuchi_wrap_{func.name}(const struct TaiyakiArg *args, '
+                f'uintptr_t argc, void *user_data) {{'
+            )
+            args_str = ", ".join(
+                f'args[{i}].string' if isinstance(p.type, StringType)
+                else f'(int)(args[{i}].number)' if isinstance(p.type, BooleanType)
+                else f'args[{i}].number'
+                for i, p in enumerate(func.params)
+            )
+        else:
+            # Fast f64 wrapper
+            lines.append(
+                f'static double tsuchi_wrap_{func.name}(const double *args, '
+                f'uintptr_t argc, void *user_data) {{'
+            )
+            args_str = ", ".join(
+                f'(int)(args[{i}])' if isinstance(p.type, BooleanType)
+                else f'args[{i}]'
+                for i, p in enumerate(func.params)
+            )
+
         if isinstance(func.return_type, VoidType):
             lines.append(f'    _tsuchi_{func.name}({args_str});')
             lines.append('    return 0.0;')
         elif isinstance(func.return_type, BooleanType):
             lines.append(f'    int result = _tsuchi_{func.name}({args_str});')
             lines.append('    return (double)result;')
+        elif isinstance(func.return_type, StringType):
+            lines.append(f'    const char *result = _tsuchi_{func.name}({args_str});')
+            lines.append('    return 0.0; /* string return — accessible via fallback */')
         else:
             lines.append(f'    return _tsuchi_{func.name}({args_str});')
         lines.append('}')
@@ -428,8 +463,10 @@ class TaiyakiBackend(BackendBase):
         # Register AOT-compiled functions
         for func in exported_funcs:
             nparams = len(func.params)
+            has_strings = any(isinstance(p.type, StringType) for p in func.params)
+            reg_fn = "taiyaki_full_runtime_register_fn" if has_strings else "taiyaki_full_runtime_register_fn_f64"
             lines.append(
-                f'    taiyaki_full_runtime_register_fn_f64(_tsuchi_rt, "{func.name}", {len(func.name)}, '
+                f'    {reg_fn}(_tsuchi_rt, "{func.name}", {len(func.name)}, '
                 f'tsuchi_wrap_{func.name}, {nparams}, NULL);'
             )
 
@@ -488,14 +525,10 @@ class TaiyakiBackend(BackendBase):
         return qjs
 
     def _convert_reg_prefix(self, lines: list[str], prefix: str) -> list[str]:
-        """Fix registration lines to use the correct function prefix."""
+        """Fix all taiyaki_rl_ prefixes to the correct one (e.g. taiyaki_ctui_)."""
         result = []
         for line in lines:
-            # Fix taiyaki_rl_ prefix to the correct one
-            if 'taiyaki_full_runtime_register_fn' in line and 'taiyaki_rl_' in line:
-                line = line.replace('taiyaki_rl_', f'taiyaki_{prefix}_')
-            if line.startswith('static double taiyaki_rl_'):
-                line = line.replace('taiyaki_rl_', f'taiyaki_{prefix}_')
+            line = line.replace('taiyaki_rl_', f'taiyaki_{prefix}_')
             result.append(line)
         return result
 
@@ -517,7 +550,7 @@ class TaiyakiBackend(BackendBase):
             return []
         qjs = self._get_qjs_backend()
         converted = _convert_qjs_to_taiyaki(qjs._generate_clay_tui_bindings())
-        return self._convert_reg_prefix(converted, 'ctui')
+        return self._convert_reg_prefix(converted, 'clay_tui')
 
     def _generate_ui_bindings(self) -> list[str]:
         if not self._uses_ui:
