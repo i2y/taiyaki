@@ -11,5 +11,8 @@ __pycache__/
 node_modules/
 package-lock.json
 
+# Build artifacts
+dist/
+
 # Lock files (generated)
 uv.lock
