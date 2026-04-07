@@ -583,8 +583,7 @@ impl AsyncRuntime {
     /// Clear cached dependency bundles.
     #[staticmethod]
     fn clear_dependency_cache() -> PyResult<()> {
-        deps::clear_cache()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+        deps::clear_cache().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 }
 

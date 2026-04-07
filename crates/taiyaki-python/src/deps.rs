@@ -153,7 +153,12 @@ fn read_package_entry(
     } else {
         None
     }
-    .or_else(|| pkg_json.get("main").and_then(|m| m.as_str()).map(String::from))
+    .or_else(|| {
+        pkg_json
+            .get("main")
+            .and_then(|m| m.as_str())
+            .map(String::from)
+    })
     .unwrap_or_else(|| "index.js".to_string());
 
     // If the name has a subpath (e.g., "react-dom/server"), resolve from subpath
@@ -263,7 +268,8 @@ async fn install_package(
     for (dep_name, dep_range) in &version_meta.dependencies {
         let dep_dir = node_modules.join(dep_name);
         if !dep_dir.exists() {
-            if let Err(e) = Box::pin(install_package(client, dep_name, dep_range, node_modules)).await
+            if let Err(e) =
+                Box::pin(install_package(client, dep_name, dep_range, node_modules)).await
             {
                 eprintln!("Warning: failed to install {dep_name}: {e}");
             }

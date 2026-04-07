@@ -98,9 +98,7 @@ pub async fn start_repl() -> Result<(), Box<dyn std::error::Error>> {
     // Welcome
     if is_tty {
         println!();
-        println!(
-            "\x1b[35m{LOGO_LINE1}\x1b[0m  \x1b[36m{FISH}\x1b[0m"
-        );
+        println!("\x1b[35m{LOGO_LINE1}\x1b[0m  \x1b[36m{FISH}\x1b[0m");
         println!("\x1b[35m{LOGO_LINE2}\x1b[0m");
         println!("\x1b[35m{LOGO_LINE3}\x1b[0m");
         println!(
@@ -218,7 +216,11 @@ fn needs_continuation(input: &str) -> bool {
         .any(|tok| trimmed.ends_with(tok))
 }
 
-fn collect_multiline(rl: &mut Editor<ReplHelper, rustyline::history::DefaultHistory>, first_line: &str, cont_prompt: &str) -> String {
+fn collect_multiline(
+    rl: &mut Editor<ReplHelper, rustyline::history::DefaultHistory>,
+    first_line: &str,
+    cont_prompt: &str,
+) -> String {
     let mut buf = first_line.to_string();
     while needs_continuation(&buf) {
         match rl.readline(cont_prompt) {
@@ -303,7 +305,9 @@ async fn handle_dot_command(
             let len = history.len();
             let start = len.saturating_sub(20);
             for i in start..len {
-                if let Ok(Some(entry)) = history.get(i, rustyline::history::SearchDirection::Forward) {
+                if let Ok(Some(entry)) =
+                    history.get(i, rustyline::history::SearchDirection::Forward)
+                {
                     if is_tty {
                         println!("  \x1b[2m{:>3}\x1b[0m  {}", i + 1, entry.entry);
                     } else {
@@ -364,15 +368,13 @@ async fn eval_and_print(engine: &crate::Engine, code: &str, is_tty: bool) {
                 },
             }
         }
-        Err(_) => {
-            match engine.eval_async(code).await {
-                Ok(val) => match &val {
-                    JsValue::Undefined => {}
-                    _ => print_value(&val, is_tty),
-                },
-                Err(e) => print_error(&e.to_string(), is_tty),
-            }
-        }
+        Err(_) => match engine.eval_async(code).await {
+            Ok(val) => match &val {
+                JsValue::Undefined => {}
+                _ => print_value(&val, is_tty),
+            },
+            Err(e) => print_error(&e.to_string(), is_tty),
+        },
     }
 }
 
