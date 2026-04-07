@@ -1177,6 +1177,19 @@ class JSInferrer:
                 "EventTarget", "AbortController", "AbortSignal",
                 "queueMicrotask", "structuredClone", "atob", "btoa",
                 "globalThis", "self", "window", "document",
+                # Web API classes
+                "Request", "Response", "Headers",
+                "ReadableStream", "WritableStream", "TransformStream",
+                "Blob", "File", "FormData", "DOMException",
+                # Taiyaki runtime
+                "Katana", "Taiyaki",
+                # Web API functions / timers
+                "fetch", "setTimeout", "setInterval",
+                "clearTimeout", "clearInterval",
+                # Web API namespaces
+                "crypto", "performance",
+                # Node.js polyfills
+                "Buffer", "require",
             })
             if expr.name in _JS_BUILTINS:
                 self.diag.warning(f"'{expr.name}' is not natively compiled — will use JS runtime fallback", location=loc)

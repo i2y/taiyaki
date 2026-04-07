@@ -277,6 +277,41 @@ sum([1, 2, 3]);
         assert isinstance(func.return_type, NumberType)
 
 
+class TestRuntimeGlobalsFallback:
+    def test_katana_serve_no_error(self):
+        """Katana.serve() should trigger warning, not error."""
+        typed, diag = infer("""
+function startServer() {
+    Katana.serve({ port: 3000 });
+}
+startServer();
+""")
+        assert not diag.has_errors()
+        assert not typed.functions[0].is_compilable
+
+    def test_web_api_globals_no_error(self):
+        """Web API globals (Response, Request, Headers) should not cause errors."""
+        typed, diag = infer("""
+function handler(req) {
+    const h = new Headers();
+    return new Response("hello", { status: 200 });
+}
+handler(new Request("http://localhost"));
+""")
+        assert not diag.has_errors()
+
+    def test_fetch_as_identifier_no_error(self):
+        """fetch used as an identifier (not just call) should not cause error."""
+        typed, diag = infer("""
+function run() {
+    const f = fetch;
+    return f;
+}
+run();
+""")
+        assert not diag.has_errors()
+
+
 class TestDiagnostics:
     def test_undefined_variable(self):
         typed, diag = infer("""
