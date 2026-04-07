@@ -145,6 +145,9 @@ pub trait JsEngine {
 
     fn eval_module(&self, code: &str, name: &str) -> Result<JsValue, EngineError>;
     fn register_module(&self, name: &str, code: &str) -> Result<(), EngineError>;
+
+    /// Gets a global property by name (e.g. a global function for AOT bridge calls).
+    fn get_global(&self, name: &str) -> Result<JsValue, EngineError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +210,12 @@ pub trait AsyncJsEngine {
         &self,
         base_path: &std::path::Path,
     ) -> impl std::future::Future<Output = ()>;
+
+    /// Gets a global property by name.
+    fn get_global(
+        &self,
+        name: &str,
+    ) -> impl std::future::Future<Output = Result<JsValue, EngineError>>;
 
     /// Process pending async callbacks (resolve promises, drain queues).
     fn idle(&self) -> impl std::future::Future<Output = ()>;

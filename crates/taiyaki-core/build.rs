@@ -8,7 +8,47 @@ fn main() {
         .with_config(cbindgen::Config::from_file("cbindgen.toml").unwrap())
         .generate()
         .expect("Unable to generate C bindings")
-        .write_to_file("include/taiyaki.h");
+        .write_to_file("include/taiyaki_raw.h");
+
+    // Post-process: remove JSC-specific lines from the header.
+    // cbindgen doesn't respect #[cfg(feature)] so JSC types leak into the header.
+    let raw = std::fs::read_to_string("include/taiyaki_raw.h").unwrap();
+    let mut filtered = String::new();
+    let mut skip = false;
+    for line in raw.lines() {
+        // Skip JSC type definitions and extern function declarations
+        if line.contains("JSContextRef")
+            || line.contains("JSValueRef")
+            || line.contains("JSObjectRef")
+            || line.contains("JSStringRef")
+            || line.contains("JSGlobalContextRef")
+            || line.contains("JSContextGroupRef")
+            || line.contains("JSClassRef")
+            || line.contains("JSPropertyAttributes")
+            || line.contains("JSClassAttributes")
+            || line.contains("JSClassDefinition")
+            || line.contains("JSObjectCallAsFunction")
+            || line.contains("Option_JSObject")
+            || line.contains("Option_JSShould")
+            || line.contains("JSType ")
+            || line.contains("JscEngine")
+        {
+            skip = true;
+            continue;
+        }
+        // Skip multi-line continuations of skipped items
+        if skip {
+            if line.trim().is_empty() || line.starts_with("extern") || line.starts_with("typedef") || line.starts_with("#") || line.starts_with("/**") || line.starts_with(" *") {
+                skip = false;
+            } else {
+                continue;
+            }
+        }
+        filtered.push_str(line);
+        filtered.push('\n');
+    }
+    std::fs::write("include/taiyaki.h", filtered).unwrap();
+    let _ = std::fs::remove_file("include/taiyaki_raw.h");
 
     #[cfg(feature = "jsc")]
     link_jsc();

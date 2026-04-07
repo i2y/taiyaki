@@ -315,6 +315,22 @@ impl AsyncQuickJsEngine {
         Ok(())
     }
 
+    /// Gets a global property by name.
+    pub async fn get_global(&self, name: &str) -> Result<JsValue, EngineError> {
+        let name = name.to_string();
+        self.context
+            .with(|ctx| {
+                let globals = ctx.globals();
+                let val: Value<'_> = globals
+                    .get(&*name)
+                    .map_err(|e| EngineError::JsException {
+                        message: e.to_string(),
+                    })?;
+                qjs_to_jsvalue_handle(val, |v| self.store_persistent(&ctx, v))
+            })
+            .await
+    }
+
     /// Drives all pending jobs and spawned futures to completion.
     pub async fn idle(&self) {
         self.runtime.idle().await;
@@ -429,6 +445,10 @@ impl super::AsyncJsEngine for AsyncQuickJsEngine {
 
     async fn enable_file_loader(&self, base_path: &std::path::Path) {
         self.enable_file_loader(base_path).await
+    }
+
+    async fn get_global(&self, name: &str) -> Result<super::JsValue, super::EngineError> {
+        self.get_global(name).await
     }
 
     async fn idle(&self) {

@@ -959,3 +959,204 @@ pub unsafe extern "C" fn taiyaki_register_module(
         }
     })
 }
+
+// --- Global property access (for AOT bridge) ---
+
+/// Gets a global property by name. Returns NULL on error.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn taiyaki_get_global(
+    rt: *mut LibtsRuntime,
+    name: *const c_char,
+    name_len: usize,
+) -> *mut LibtsValue {
+    ffi_guard!(ptr::null_mut(), {
+        if rt.is_null() || name.is_null() {
+            set_last_error("Null argument passed to taiyaki_get_global");
+            return ptr::null_mut();
+        }
+        let rt = unsafe { &*rt };
+        let name_str = match unsafe { extract_str(name, name_len) } {
+            Ok(s) => s,
+            Err(()) => {
+                set_last_error("Invalid UTF-8 in name");
+                return ptr::null_mut();
+            }
+        };
+        match rt.engine.get_global(name_str) {
+            Ok(val) => wrap_handle_value(val, &rt.engine),
+            Err(e) => {
+                set_last_error(&e.to_string());
+                ptr::null_mut()
+            }
+        }
+    })
+}
+
+/// Calls a global function by name. Convenience for get_global + call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn taiyaki_call_global(
+    rt: *mut LibtsRuntime,
+    name: *const c_char,
+    name_len: usize,
+    args: *const *const LibtsValue,
+    argc: usize,
+) -> *mut LibtsValue {
+    ffi_guard!(ptr::null_mut(), {
+        if rt.is_null() || name.is_null() {
+            set_last_error("Null argument passed to taiyaki_call_global");
+            return ptr::null_mut();
+        }
+        let rt = unsafe { &*rt };
+        let name_str = match unsafe { extract_str(name, name_len) } {
+            Ok(s) => s,
+            Err(()) => {
+                set_last_error("Invalid UTF-8 in name");
+                return ptr::null_mut();
+            }
+        };
+        let func_val = match rt.engine.get_global(name_str) {
+            Ok(val) => val,
+            Err(e) => {
+                set_last_error(&e.to_string());
+                return ptr::null_mut();
+            }
+        };
+        let func_handle = match func_val.handle_id() {
+            Some(h) => h,
+            None => {
+                set_last_error("Global is not a function handle");
+                return ptr::null_mut();
+            }
+        };
+        let mut js_args = Vec::with_capacity(argc);
+        if argc > 0 && !args.is_null() {
+            for i in 0..argc {
+                let arg_ptr = unsafe { *args.add(i) };
+                if arg_ptr.is_null() {
+                    js_args.push(JsValue::Undefined);
+                } else {
+                    let arg = unsafe { &*arg_ptr };
+                    js_args.push(arg.inner.clone());
+                }
+            }
+        }
+        match rt.engine.call_function(func_handle, &js_args) {
+            Ok(val) => {
+                rt.engine.drop_handle(func_handle);
+                wrap_handle_value(val, &rt.engine)
+            }
+            Err(e) => {
+                rt.engine.drop_handle(func_handle);
+                set_last_error(&e.to_string());
+                ptr::null_mut()
+            }
+        }
+    })
+}
+
+// --- Fast-path calls for AOT bridge (avoid LibtsValue heap allocation) ---
+
+/// Calls a function handle with f64 args, returns f64 result.
+/// Avoids heap-allocating LibtsValue for each argument.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn taiyaki_call_fast_f64(
+    rt: *mut LibtsRuntime,
+    func: *const LibtsValue,
+    args: *const f64,
+    argc: usize,
+) -> f64 {
+    if rt.is_null() || func.is_null() {
+        return f64::NAN;
+    }
+    let rt = unsafe { &*rt };
+    let func = unsafe { &*func };
+    let func_handle = match extract_handle(func) {
+        Some(h) => h,
+        None => return f64::NAN,
+    };
+    let mut js_args = Vec::with_capacity(argc);
+    for i in 0..argc {
+        js_args.push(JsValue::Number(unsafe { *args.add(i) }));
+    }
+    match rt.engine.call_function(func_handle, &js_args) {
+        Ok(JsValue::Number(n)) => n,
+        Ok(JsValue::Bool(b)) => {
+            if b {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        _ => f64::NAN,
+    }
+}
+
+/// C callback type for fast f64 native functions (used by AOT wrappers).
+pub type TaiyakiFastFnF64 = unsafe extern "C" fn(
+    args: *const f64,
+    argc: usize,
+    user_data: *mut c_void,
+) -> f64;
+
+/// Registers a native function that takes f64 args and returns f64.
+/// Avoids LibtsValue boxing overhead for numeric functions.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn taiyaki_register_fast_fn_f64(
+    rt: *mut LibtsRuntime,
+    name: *const c_char,
+    name_len: usize,
+    callback: TaiyakiFastFnF64,
+    declared_argc: usize,
+    user_data: *mut c_void,
+) -> i32 {
+    ffi_guard!(-1, {
+        if rt.is_null() || name.is_null() {
+            set_last_error("Null argument passed to taiyaki_register_fast_fn_f64");
+            return -1;
+        }
+        let rt = unsafe { &mut *rt };
+        let name_str = match unsafe { extract_str(name, name_len) } {
+            Ok(s) => s,
+            Err(()) => {
+                set_last_error("Invalid UTF-8 in name");
+                return -1;
+            }
+        };
+        let user_data_ptr = user_data as usize;
+        let _ = declared_argc; // Used by callee, not needed here
+
+        type HostFn = Box<dyn Fn(&[JsValue]) -> Result<JsValue, EngineError>>;
+        let rust_callback: HostFn = Box::new(move |args: &[JsValue]| {
+            let mut f64_args: Vec<f64> = args
+                .iter()
+                .map(|a| match a {
+                    JsValue::Number(n) => *n,
+                    JsValue::Bool(b) => {
+                        if *b {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
+                    _ => 0.0,
+                })
+                .collect();
+            let result = unsafe {
+                callback(
+                    f64_args.as_mut_ptr(),
+                    f64_args.len(),
+                    user_data_ptr as *mut c_void,
+                )
+            };
+            Ok(JsValue::Number(result))
+        });
+
+        match rt.engine.register_global_fn(name_str, rust_callback) {
+            Ok(()) => 0,
+            Err(e) => {
+                set_last_error(&e.to_string());
+                -1
+            }
+        }
+    })
+}

@@ -11,7 +11,7 @@ categories = ["wasm", "compilers"]
 readme = "../../README.md"
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib", "rlib", "staticlib"]
 
 [features]
 default = ["quickjs"]

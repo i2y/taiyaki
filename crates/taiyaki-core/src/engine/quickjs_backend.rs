@@ -256,6 +256,19 @@ impl JsEngine for QuickJsEngine {
             .insert(name.to_string(), code.to_string());
         Ok(())
     }
+
+    fn get_global(&self, name: &str) -> Result<JsValue, EngineError> {
+        let name = name.to_string();
+        self.context.with(|ctx| {
+            let globals = ctx.globals();
+            let val: Value<'_> = globals
+                .get(&*name)
+                .map_err(|e| EngineError::JsException {
+                    message: e.to_string(),
+                })?;
+            qjs_to_jsvalue_handle(val, |v| self.store_persistent(&ctx, v))
+        })
+    }
 }
 
 impl QuickJsEngine {

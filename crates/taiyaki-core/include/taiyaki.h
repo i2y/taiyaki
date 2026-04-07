@@ -25,65 +25,6 @@ typedef struct LibtsRuntime LibtsRuntime;
 
 typedef struct LibtsValue LibtsValue;
 
-typedef struct Option_JSObjectCallAsFunctionCallback Option_JSObjectCallAsFunctionCallback;
-
-typedef struct Option_JSObjectFinalizeCallback Option_JSObjectFinalizeCallback;
-
-typedef struct Option_JSShouldTerminateCallback Option_JSShouldTerminateCallback;
-
-typedef void *JSGlobalContextRef;
-
-typedef void *JSClassRef;
-
-typedef void *JSObjectRef;
-
-typedef const void *JSContextRef;
-
-typedef const void *JSContextGroupRef;
-
-typedef uint32_t JSType;
-
-typedef const void *JSValueRef;
-
-typedef void *JSStringRef;
-
-/**
- * Callback invoked when a JSC object created with a custom class is called as a function.
- */
-typedef JSValueRef (*JSObjectCallAsFunctionCallback)(JSContextRef ctx,
-                                                     JSObjectRef function,
-                                                     JSObjectRef this_object,
-                                                     uintptr_t argument_count,
-                                                     const JSValueRef *arguments,
-                                                     JSValueRef *exception);
-
-typedef uint32_t JSPropertyAttributes;
-
-typedef uint32_t JSClassAttributes;
-
-/**
- * Matches the C struct layout of JSClassDefinition.
- */
-typedef struct JSClassDefinition {
-  int32_t version;
-  JSClassAttributes attributes;
-  const char *class_name;
-  JSClassRef parent_class;
-  const void *static_values;
-  const void *static_functions;
-  const void *initialize;
-  struct Option_JSObjectFinalizeCallback finalize;
-  const void *has_property;
-  const void *get_property;
-  const void *set_property;
-  const void *delete_property;
-  const void *get_property_names;
-  struct Option_JSObjectCallAsFunctionCallback call_as_function;
-  const void *call_as_constructor;
-  const void *has_instance;
-  const void *convert_to_type;
-} JSClassDefinition;
-
 /**
  * C callback type for host functions.
  */
@@ -106,138 +47,57 @@ typedef struct taiyaki_memory_stats {
   int64_t array_count;
 } taiyaki_memory_stats;
 
-extern JSGlobalContextRef JSGlobalContextCreate(JSClassRef global_object_class);
+/**
+ * C callback type for fast f64 native functions (used by AOT wrappers).
+ */
+typedef double (*TaiyakiFastFnF64)(const double *args, uintptr_t argc, void *user_data);
 
-extern void JSGlobalContextRelease(JSGlobalContextRef ctx);
 
-extern JSObjectRef JSContextGetGlobalObject(JSContextRef ctx);
 
-extern JSContextGroupRef JSContextGetGroup(JSContextRef ctx);
 
-extern JSType JSValueGetType(JSContextRef ctx, JSValueRef value);
 
-extern bool JSValueIsUndefined(JSContextRef ctx, JSValueRef value);
 
-extern bool JSValueIsNull(JSContextRef ctx, JSValueRef value);
 
-extern bool JSValueIsBoolean(JSContextRef ctx, JSValueRef value);
 
-extern bool JSValueIsNumber(JSContextRef ctx, JSValueRef value);
 
-extern bool JSValueIsString(JSContextRef ctx, JSValueRef value);
 
-extern bool JSValueIsObject(JSContextRef ctx, JSValueRef value);
 
-extern bool JSValueIsArray(JSContextRef ctx, JSValueRef value);
 
-extern JSValueRef JSValueMakeUndefined(JSContextRef ctx);
 
-extern JSValueRef JSValueMakeNull(JSContextRef ctx);
 
-extern JSValueRef JSValueMakeBoolean(JSContextRef ctx, bool value);
 
-extern JSValueRef JSValueMakeNumber(JSContextRef ctx, double value);
 
-extern JSValueRef JSValueMakeString(JSContextRef ctx, JSStringRef string);
 
-extern bool JSValueToBoolean(JSContextRef ctx, JSValueRef value);
 
-extern double JSValueToNumber(JSContextRef ctx, JSValueRef value, JSValueRef *exception);
 
-extern JSStringRef JSValueToStringCopy(JSContextRef ctx, JSValueRef value, JSValueRef *exception);
 
-extern JSObjectRef JSValueToObject(JSContextRef ctx, JSValueRef value, JSValueRef *exception);
 
-extern void JSValueProtect(JSContextRef ctx, JSValueRef value);
 
-extern void JSValueUnprotect(JSContextRef ctx, JSValueRef value);
 
-extern JSValueRef JSValueMakeFromJSONString(JSContextRef ctx, JSStringRef string);
 
-extern JSStringRef JSValueCreateJSONString(JSContextRef ctx,
-                                           JSValueRef value,
-                                           uint32_t indent,
-                                           JSValueRef *exception);
 
-extern JSStringRef JSStringCreateWithUTF8CString(const char *string);
 
-extern void JSStringRelease(JSStringRef string);
 
-extern uintptr_t JSStringGetMaximumUTF8CStringSize(JSStringRef string);
 
-extern uintptr_t JSStringGetUTF8CString(JSStringRef string, char *buffer, uintptr_t buffer_size);
 
-extern JSObjectRef JSObjectMake(JSContextRef ctx, JSClassRef js_class, void *data);
 
-extern JSObjectRef JSObjectMakeFunctionWithCallback(JSContextRef ctx,
-                                                    JSStringRef name,
-                                                    JSObjectCallAsFunctionCallback callback);
 
-extern JSObjectRef JSObjectMakeArray(JSContextRef ctx,
-                                     uintptr_t argument_count,
-                                     const JSValueRef *arguments,
-                                     JSValueRef *exception);
 
-extern JSValueRef JSObjectGetProperty(JSContextRef ctx,
-                                      JSObjectRef object,
-                                      JSStringRef property_name,
-                                      JSValueRef *exception);
 
-extern void JSObjectSetProperty(JSContextRef ctx,
-                                JSObjectRef object,
-                                JSStringRef property_name,
-                                JSValueRef value,
-                                JSPropertyAttributes attributes,
-                                JSValueRef *exception);
 
-extern JSValueRef JSObjectGetPropertyAtIndex(JSContextRef ctx,
-                                             JSObjectRef object,
-                                             uint32_t property_index,
-                                             JSValueRef *exception);
 
-extern void JSObjectSetPropertyAtIndex(JSContextRef ctx,
-                                       JSObjectRef object,
-                                       uint32_t property_index,
-                                       JSValueRef value,
-                                       JSValueRef *exception);
 
-extern JSValueRef JSObjectCallAsFunction(JSContextRef ctx,
-                                         JSObjectRef object,
-                                         JSObjectRef this_object,
-                                         uintptr_t argument_count,
-                                         const JSValueRef *arguments,
-                                         JSValueRef *exception);
 
-extern bool JSObjectIsFunction(JSContextRef ctx, JSObjectRef object);
 
-extern void *JSObjectGetPrivate(JSObjectRef object);
 
-extern bool JSObjectSetPrivate(JSObjectRef object, void *data);
 
-extern JSClassRef JSClassCreate(const struct JSClassDefinition *definition);
 
-extern void JSClassRelease(JSClassRef js_class);
 
-extern JSValueRef JSEvaluateScript(JSContextRef ctx,
-                                   JSStringRef script,
-                                   JSObjectRef this_object,
-                                   JSStringRef source_url,
-                                   int32_t starting_line_number,
-                                   JSValueRef *exception);
 
-extern void JSGarbageCollect(JSContextRef ctx);
 
-extern void JSContextGroupSetExecutionTimeLimit(JSContextGroupRef group,
-                                                double limit,
-                                                struct Option_JSShouldTerminateCallback callback,
-                                                void *context);
 
-extern void JSContextGroupClearExecutionTimeLimit(JSContextGroupRef group);
 
-extern JSObjectRef JSObjectMakeDeferredPromise(JSContextRef ctx,
-                                               JSObjectRef *resolve,
-                                               JSObjectRef *reject,
-                                               JSValueRef *exception);
+
 
 /**
  * Returns the last error message, or NULL if no error.
@@ -454,5 +314,41 @@ int32_t taiyaki_register_module(struct LibtsRuntime *rt,
                                 uintptr_t name_len,
                                 const char *code,
                                 uintptr_t code_len);
+
+/**
+ * Gets a global property by name. Returns NULL on error.
+ */
+struct LibtsValue *taiyaki_get_global(struct LibtsRuntime *rt,
+                                      const char *name,
+                                      uintptr_t name_len);
+
+/**
+ * Calls a global function by name. Convenience for get_global + call.
+ */
+struct LibtsValue *taiyaki_call_global(struct LibtsRuntime *rt,
+                                       const char *name,
+                                       uintptr_t name_len,
+                                       const struct LibtsValue *const *args,
+                                       uintptr_t argc);
+
+/**
+ * Calls a function handle with f64 args, returns f64 result.
+ * Avoids heap-allocating LibtsValue for each argument.
+ */
+double taiyaki_call_fast_f64(struct LibtsRuntime *rt,
+                             const struct LibtsValue *func,
+                             const double *args,
+                             uintptr_t argc);
+
+/**
+ * Registers a native function that takes f64 args and returns f64.
+ * Avoids LibtsValue boxing overhead for numeric functions.
+ */
+int32_t taiyaki_register_fast_fn_f64(struct LibtsRuntime *rt,
+                                     const char *name,
+                                     uintptr_t name_len,
+                                     TaiyakiFastFnF64 callback,
+                                     uintptr_t declared_argc,
+                                     void *user_data);
 
 #endif  /* TAIYAKI_H */

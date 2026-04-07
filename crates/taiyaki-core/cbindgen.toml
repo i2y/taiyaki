@@ -6,6 +6,31 @@ sys_includes = ["stdint.h", "stddef.h"]
 
 [export]
 include = ["TaiyakiStatus", "TaiyakiType", "MemoryStats"]
+exclude = [
+    "Option_JSObjectCallAsFunctionCallback",
+    "Option_JSObjectFinalizeCallback",
+    "Option_JSShouldTerminateCallback",
+    "JSClassDefinition",
+    "JSObjectCallAsFunctionCallback",
+    "JSGlobalContextRef",
+    "JSClassRef",
+    "JSObjectRef",
+    "JSContextRef",
+    "JSContextGroupRef",
+    "JSType",
+    "JSValueRef",
+    "JSStringRef",
+    "JSPropertyAttributes",
+    "JSClassAttributes",
+    "JscEngine",
+]
+
+[parse]
+parse_deps = false
+
+[parse.expand]
+# Only expand macros in ffi.rs — this prevents cbindgen from seeing JSC internals
+crates = []
 
 [export.rename]
 "TaiyakiStatus" = "taiyaki_status"

@@ -195,6 +195,11 @@ impl AsyncJscEngine {
         self.engine.register_module(name, code)
     }
 
+    /// Gets a global property by name.
+    pub async fn get_global(&self, name: &str) -> Result<JsValue, EngineError> {
+        self.engine.get_global(name)
+    }
+
     /// Processes pending callbacks — both local and remote (from tokio tasks).
     /// Waits for all in-flight async operations to complete.
     pub async fn idle(&self) {
@@ -402,6 +407,10 @@ impl super::AsyncJsEngine for AsyncJscEngine {
 
     async fn enable_file_loader(&self, base_path: &std::path::Path) {
         self.enable_file_loader(base_path).await
+    }
+
+    async fn get_global(&self, name: &str) -> Result<JsValue, EngineError> {
+        self.get_global(name).await
     }
 
     async fn idle(&self) {

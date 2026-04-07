@@ -1,3 +1,4 @@
+mod aot_compile;
 mod async_builtins;
 mod async_fs;
 mod build;
@@ -151,6 +152,9 @@ enum Commands {
         /// Output binary path
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// AOT compile via tsuchi (native binary with LLVM)
+        #[arg(long)]
+        aot: bool,
     },
 }
 
@@ -323,8 +327,13 @@ async fn main() {
                 process::exit(1);
             }
         }
-        Some(Commands::Compile { entry, output }) => {
-            if let Err(e) = compile::compile(&entry, output.as_deref()) {
+        Some(Commands::Compile { entry, output, aot }) => {
+            if aot {
+                if let Err(e) = aot_compile::run(&entry, output.as_deref()) {
+                    format_error(&e);
+                    process::exit(1);
+                }
+            } else if let Err(e) = compile::compile(&entry, output.as_deref()) {
                 format_error(&e);
                 process::exit(1);
             }

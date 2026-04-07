@@ -836,6 +836,11 @@ return module.exports;
             .insert(name.to_string(), cjs);
         Ok(())
     }
+
+    fn get_global(&self, name: &str) -> Result<JsValue, EngineError> {
+        // Evaluate the bare identifier to get the global value
+        self.eval(name)
+    }
 }
 
 // ---------------------------------------------------------------------------
