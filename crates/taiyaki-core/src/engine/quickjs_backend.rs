@@ -282,7 +282,7 @@ impl QuickJsEngine {
                 SharedResolver {
                     modules: self.module_sources.clone(),
                 },
-                NodeModuleResolver,
+                NodeModuleResolver::new(),
                 FileResolver::default().with_path(base_path.to_str().unwrap_or(".")),
             ),
             (

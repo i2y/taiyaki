@@ -358,7 +358,7 @@ impl AsyncQuickJsEngine {
                     SharedResolver {
                         modules: modules.clone(),
                     },
-                    NodeModuleResolver,
+                    NodeModuleResolver::new(),
                     FileResolver::default().with_path(&base),
                 ),
                 (SharedLoader { modules }, ScriptLoader::default()),

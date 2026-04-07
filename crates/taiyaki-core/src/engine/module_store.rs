@@ -48,59 +48,75 @@ impl Loader for SharedLoader {
 // ---------------------------------------------------------------------------
 
 /// Resolver that handles bare specifiers via node_modules and relative paths.
-pub(crate) struct NodeModuleResolver;
+/// Caches resolved paths to avoid redundant filesystem operations.
+pub(crate) struct NodeModuleResolver {
+    cache: RefCell<HashMap<(String, String), String>>,
+}
 
-impl Resolver for NodeModuleResolver {
-    fn resolve<'js>(&mut self, _ctx: &Ctx<'js>, base: &str, name: &str) -> Result<String> {
-        // Determine the directory of the importing module
-        let base_dir = if base.is_empty() || base == "." || base == "<input>" || base == "<eval>" {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-        } else {
-            let p = Path::new(base);
-            if p.is_file() {
-                p.parent().unwrap_or(Path::new(".")).to_path_buf()
-            } else {
-                p.to_path_buf()
-            }
-        };
-
-        // 1. Relative or absolute path
-        if name.starts_with("./") || name.starts_with("../") || name.starts_with('/') {
-            let candidate = base_dir.join(name);
-            if let Some(resolved) = resolve_file_or_dir(&candidate) {
-                // Canonicalize to avoid infinite loops with ../foo -> ./bar/../foo cycles
-                return Ok(canonicalize_or_clean(&resolved));
-            }
-            return Err(rquickjs::Error::new_loading(name));
+impl NodeModuleResolver {
+    pub(crate) fn new() -> Self {
+        Self {
+            cache: RefCell::new(HashMap::new()),
         }
-
-        // 2. Bare specifier — walk up node_modules
-        let mut dir = base_dir;
-        loop {
-            let nm = dir.join("node_modules").join(name);
-            if let Some(resolved) = resolve_file_or_dir(&nm) {
-                return Ok(canonicalize_or_clean(&resolved));
-            }
-            if let Some(resolved) = resolve_package_esm(&nm) {
-                return Ok(canonicalize_or_clean(&resolved));
-            }
-            if !dir.pop() {
-                break;
-            }
-        }
-
-        Err(rquickjs::Error::new_loading(name))
     }
 }
 
-/// Canonicalize a path to avoid cycles (e.g. ./utils/../request.js → /abs/request.js).
-fn canonicalize_or_clean(path: &str) -> String {
-    std::fs::canonicalize(path)
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| path.to_string())
+impl Resolver for NodeModuleResolver {
+    fn resolve<'js>(&mut self, _ctx: &Ctx<'js>, base: &str, name: &str) -> Result<String> {
+        let cache_key = (base.to_string(), name.to_string());
+        if let Some(cached) = self.cache.borrow().get(&cache_key) {
+            return Ok(cached.clone());
+        }
+
+        let base_dir = if base.is_empty() || base == "." || base == "<input>" || base == "<eval>" {
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        } else {
+            // base is always a resolved file path from a previous resolution
+            let p = Path::new(base);
+            p.parent().unwrap_or(Path::new(".")).to_path_buf()
+        };
+
+        let resolved = if name.starts_with("./") || name.starts_with("../") || name.starts_with('/')
+        {
+            let candidate = base_dir.join(name);
+            resolve_file_or_dir(&candidate)
+                .ok_or_else(|| rquickjs::Error::new_resolving(base, name))
+        } else {
+            // Bare specifier — walk up node_modules
+            resolve_bare_specifier(&base_dir, name)
+                .ok_or_else(|| rquickjs::Error::new_resolving(base, name))
+        }?;
+
+        // Canonicalize to prevent infinite cycles from circular relative imports
+        let canonical = std::fs::canonicalize(&resolved)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or(resolved);
+
+        self.cache
+            .borrow_mut()
+            .insert(cache_key, canonical.clone());
+        Ok(canonical)
+    }
 }
 
-/// Try to resolve a path as a file (with extension fallbacks) or directory (index.js).
+fn resolve_bare_specifier(start_dir: &Path, name: &str) -> Option<String> {
+    let mut dir = start_dir.to_path_buf();
+    loop {
+        let nm = dir.join("node_modules").join(name);
+        if let Some(resolved) = resolve_package_esm(&nm) {
+            return Some(resolved);
+        }
+        // Also try as a direct file (rare but valid)
+        if let Some(resolved) = resolve_file_or_dir(&nm) {
+            return Some(resolved);
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    None
+}
+
 fn resolve_file_or_dir(candidate: &Path) -> Option<String> {
     if let Ok(meta) = candidate.metadata() {
         if meta.is_file() {
@@ -129,72 +145,50 @@ fn resolve_index(dir: &Path) -> Option<String> {
     None
 }
 
-/// Resolve via package.json — prefers "module" (ESM) over "main" (CJS).
-/// Also checks "exports" → "." → "import" for conditional exports.
+/// Resolve via package.json — prefers exports.".".import > "module" > "main".
 fn resolve_package_esm(dir: &Path) -> Option<String> {
     let pkg = dir.join("package.json");
     let content = std::fs::read_to_string(&pkg).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
 
-    // Try "exports" → "." → "import" (conditional exports, most modern packages)
-    if let Some(entry) = extract_exports_import(&content) {
+    // "exports" → "." → "import" (conditional exports)
+    if let Some(entry) = json
+        .get("exports")
+        .and_then(|e| e.get("."))
+        .and_then(|dot| {
+            // Handle both { ".": { "import": "..." } } and { ".": "..." }
+            dot.get("import")
+                .and_then(|v| v.as_str())
+                .or_else(|| dot.as_str())
+        })
+    {
         let entry_path = dir.join(entry);
         if let Some(resolved) = resolve_file_or_dir(&entry_path) {
             return Some(resolved);
         }
     }
 
-    // Try "module" field (ESM entry point)
-    if let Some(entry) = extract_json_string_field(&content, "module") {
+    // "exports" as a direct string: "exports": "./dist/index.js"
+    if let Some(entry) = json.get("exports").and_then(|v| v.as_str()) {
         let entry_path = dir.join(entry);
         if let Some(resolved) = resolve_file_or_dir(&entry_path) {
             return Some(resolved);
         }
     }
 
-    // Fallback to "main"
-    if let Some(entry) = extract_json_string_field(&content, "main") {
+    // "module" field (ESM entry)
+    if let Some(entry) = json.get("module").and_then(|v| v.as_str()) {
+        let entry_path = dir.join(entry);
+        if let Some(resolved) = resolve_file_or_dir(&entry_path) {
+            return Some(resolved);
+        }
+    }
+
+    // "main" fallback
+    if let Some(entry) = json.get("main").and_then(|v| v.as_str()) {
         let entry_path = dir.join(entry);
         return resolve_file_or_dir(&entry_path);
     }
 
-    // Fallback to index.js
     resolve_index(dir)
-}
-
-/// Extract a simple string field from JSON without a full parser.
-/// Looks for `"field": "value"` pattern.
-fn extract_json_string_field<'a>(json: &'a str, field: &str) -> Option<&'a str> {
-    let pattern = format!("\"{}\"", field);
-    let idx = json.find(&pattern)?;
-    let after_key = &json[idx + pattern.len()..];
-    // Skip whitespace and colon
-    let after_colon = after_key.trim_start().strip_prefix(':')?;
-    let after_colon = after_colon.trim_start();
-    // Extract string value
-    let after_quote = after_colon.strip_prefix('"')?;
-    let end = after_quote.find('"')?;
-    Some(&after_quote[..end])
-}
-
-/// Extract "exports" → "." → "import" from package.json.
-/// Handles the common pattern: `"exports": { ".": { "import": "./dist/index.js" } }`
-fn extract_exports_import(json: &str) -> Option<&str> {
-    // Find "exports"
-    let exports_idx = json.find("\"exports\"")?;
-    let after = &json[exports_idx..];
-
-    // Find the "." entry within exports
-    let dot_idx = after.find("\".\"")? ;
-    let after_dot = &after[dot_idx..];
-
-    // Find "import" within the "." entry
-    let import_idx = after_dot.find("\"import\"")?;
-    let after_import_key = &after_dot[import_idx + 8..]; // len("\"import\"") = 8
-
-    // Extract value
-    let after_colon = after_import_key.trim_start().strip_prefix(':')?;
-    let after_colon = after_colon.trim_start();
-    let after_quote = after_colon.strip_prefix('"')?;
-    let end = after_quote.find('"')?;
-    Some(&after_quote[..end])
 }
