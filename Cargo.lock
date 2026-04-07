@@ -3349,7 +3349,7 @@ dependencies = [
 
 [[package]]
 name = "taiyaki-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64",
  "clap",
@@ -3386,7 +3386,7 @@ dependencies = [
 
 [[package]]
 name = "taiyaki-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cbindgen",
  "pkg-config",
@@ -3406,7 +3406,7 @@ dependencies = [
 
 [[package]]
 name = "taiyaki-node-polyfill"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -3442,7 +3442,7 @@ dependencies = [
 
 [[package]]
 name = "taiyaki-python"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "flate2",
  "pyo3",
