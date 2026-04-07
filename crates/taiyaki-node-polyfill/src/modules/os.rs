@@ -184,7 +184,7 @@ fn os_uptime(_args: &[JsValue]) -> Result<JsValue, EngineError> {
             libc::sysinfo(&mut info);
             info
         };
-        return Ok(JsValue::Number(info.uptime as f64));
+        Ok(JsValue::Number(info.uptime as f64))
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
