@@ -178,6 +178,7 @@ jobs:
         with:
           packages-dir: dist/
           attestations: false
+          skip-existing: true
 
   # ─── Build taiyaki-jsc wheels ─────────────────────────────
   build-taiyaki-jsc-wheels:
@@ -249,6 +250,7 @@ jobs:
         with:
           packages-dir: dist/
           attestations: false
+          skip-existing: true
 
   # ─── Publish taiyaki-web to PyPI ──────────────────────────
   publish-taiyaki-web-pypi:
@@ -276,6 +278,7 @@ jobs:
         with:
           packages-dir: packages/taiyaki-web/dist/
           attestations: false
+          skip-existing: true
 
   # ─── GitHub Release ───────────────────────────────────────
   github-release:
