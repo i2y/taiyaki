@@ -177,6 +177,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          attestations: false
 
   # ─── Build taiyaki-jsc wheels ─────────────────────────────
   build-taiyaki-jsc-wheels:
@@ -247,6 +248,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          attestations: false
 
   # ─── Publish taiyaki-web to PyPI ──────────────────────────
   publish-taiyaki-web-pypi:
@@ -273,6 +275,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: packages/taiyaki-web/dist/
+          attestations: false
 
   # ─── GitHub Release ───────────────────────────────────────
   github-release:
