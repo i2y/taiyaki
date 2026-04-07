@@ -17,13 +17,13 @@ fn find_aot_compiler_dir() -> Result<std::path::PathBuf, String> {
     }
 
     // 2. Relative to executable (development layout: target/{profile}/taiyaki -> ../../packages/taiyaki-aot-compiler)
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(profile_dir) = exe.parent() {
-            let repo_root = profile_dir.join("../..");
-            let aot_dir = repo_root.join("packages/taiyaki-aot-compiler");
-            if aot_dir.exists() {
-                return Ok(aot_dir);
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(profile_dir) = exe.parent()
+    {
+        let repo_root = profile_dir.join("../..");
+        let aot_dir = repo_root.join("packages/taiyaki-aot-compiler");
+        if aot_dir.exists() {
+            return Ok(aot_dir);
         }
     }
 
