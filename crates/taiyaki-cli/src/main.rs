@@ -444,8 +444,13 @@ async fn run_file(
     // JSX/TSX always need module mode because automatic runtime generates
     // `import { jsx } from "preact/jsx-runtime"`.
     let result = if is_module || is_jsx {
-        let name = file.file_stem().and_then(|s| s.to_str()).unwrap_or("main");
-        engine.eval_module_async(&code, name).await
+        // Use the full file path as module name so the resolver can determine the base directory
+        let name = file
+            .canonicalize()
+            .unwrap_or_else(|_| file.to_path_buf())
+            .to_string_lossy()
+            .into_owned();
+        engine.eval_module_async(&code, &name).await
     } else {
         engine.eval_async(&code).await
     };

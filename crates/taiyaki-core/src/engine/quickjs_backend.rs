@@ -8,6 +8,7 @@ use rquickjs::{Context, Module, Object, Persistent, Runtime, Value};
 use super::convert::{
     eval_with_catch, json_stringify, jsvalue_to_qjs, qjs_to_jsvalue_handle, register_host_fn,
 };
+use super::module_store::NodeModuleResolver;
 use super::module_store::{SharedLoader, SharedResolver};
 use super::{EngineError, HostCallback, JsEngine, JsValue, MemoryStats};
 
@@ -281,6 +282,7 @@ impl QuickJsEngine {
                 SharedResolver {
                     modules: self.module_sources.clone(),
                 },
+                NodeModuleResolver,
                 FileResolver::default().with_path(base_path.to_str().unwrap_or(".")),
             ),
             (

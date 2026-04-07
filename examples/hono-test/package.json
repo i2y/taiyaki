@@ -1,0 +1,13 @@
+{
+  "name": "hono-test",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "taiyaki test"
+  },
+  "dependencies": {
+    "hono": "^4.12.12"
+  }
+}
