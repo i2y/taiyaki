@@ -755,13 +755,16 @@ impl JsEngine for JscEngine {
             r#"({fn_kw}() {{
 var module = {{ exports: {{}} }};
 var exports = module.exports;
-var require = globalThis.require || function(name) {{
+var require = function(name) {{
   var s = (globalThis.__builtin_sources || {{}})[name];
-  if (!s) throw new Error("Cannot find module '" + name + "'");
-  var m = {{ exports: {{}} }};
-  var fn = new Function("module", "exports", "require", s);
-  fn(m, m.exports, require);
-  return m.exports;
+  if (s) {{
+    var m = {{ exports: {{}} }};
+    var fn = new Function("module", "exports", "require", s);
+    fn(m, m.exports, require);
+    return m.exports;
+  }}
+  if (globalThis.require) return globalThis.require(name);
+  throw new Error("Cannot find module '" + name + "'");
 }};
 {cjs}
 return module.exports;
