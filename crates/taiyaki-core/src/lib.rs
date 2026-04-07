@@ -1,3 +1,10 @@
+#![allow(
+    clippy::wrong_self_convention,
+    clippy::needless_borrow,
+    clippy::new_without_default,
+    clippy::type_complexity
+)]
+
 pub mod engine;
 pub mod permissions;
 pub mod transpiler;
