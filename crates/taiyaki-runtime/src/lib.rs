@@ -3,12 +3,12 @@
 //! This crate extracts the taiyaki CLI's runtime builtins into a reusable library
 //! that can be linked into AOT-compiled binaries via C ABI.
 
-pub mod util;
-pub mod builtins;
 pub mod async_builtins;
 pub mod async_fs;
+pub mod builtins;
 pub mod child_process;
 pub mod dns;
+pub mod ffi;
 pub mod fs_watch;
 pub mod http_node;
 pub mod net;
@@ -17,8 +17,8 @@ pub mod server;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 pub mod tls;
+pub mod util;
 pub mod worker_threads;
-pub mod ffi;
 
 use std::path::Path;
 use std::sync::Arc;

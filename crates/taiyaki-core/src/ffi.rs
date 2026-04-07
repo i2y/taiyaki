@@ -1093,11 +1093,8 @@ pub unsafe extern "C" fn taiyaki_call_fast_f64(
 }
 
 /// C callback type for fast f64 native functions (used by AOT wrappers).
-pub type TaiyakiFastFnF64 = unsafe extern "C" fn(
-    args: *const f64,
-    argc: usize,
-    user_data: *mut c_void,
-) -> f64;
+pub type TaiyakiFastFnF64 =
+    unsafe extern "C" fn(args: *const f64, argc: usize, user_data: *mut c_void) -> f64;
 
 /// Registers a native function that takes f64 args and returns f64.
 /// Avoids LibtsValue boxing overhead for numeric functions.

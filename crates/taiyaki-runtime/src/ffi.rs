@@ -18,11 +18,8 @@ pub struct TaiyakiFullRuntime {
 }
 
 /// C callback type for fast f64 native functions.
-pub type TaiyakiAotFnF64 = unsafe extern "C" fn(
-    args: *const f64,
-    argc: usize,
-    user_data: *mut c_void,
-) -> f64;
+pub type TaiyakiAotFnF64 =
+    unsafe extern "C" fn(args: *const f64, argc: usize, user_data: *mut c_void) -> f64;
 
 /// Creates a full runtime with all builtins registered.
 /// Returns NULL on failure.
@@ -102,21 +99,30 @@ pub unsafe extern "C" fn taiyaki_full_runtime_register_fn_f64(
     let user_data_ptr = user_data as usize;
     let _ = declared_argc;
 
-    let rust_callback: taiyaki_core::engine::HostCallback =
-        Box::new(move |args: &[JsValue]| {
-            let f64_args: Vec<f64> = args
-                .iter()
-                .map(|a| match a {
-                    JsValue::Number(n) => *n,
-                    JsValue::Bool(b) => if *b { 1.0 } else { 0.0 },
-                    _ => 0.0,
-                })
-                .collect();
-            let result = unsafe {
-                callback(f64_args.as_ptr(), f64_args.len(), user_data_ptr as *mut c_void)
-            };
-            Ok(JsValue::Number(result))
-        });
+    let rust_callback: taiyaki_core::engine::HostCallback = Box::new(move |args: &[JsValue]| {
+        let f64_args: Vec<f64> = args
+            .iter()
+            .map(|a| match a {
+                JsValue::Number(n) => *n,
+                JsValue::Bool(b) => {
+                    if *b {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                _ => 0.0,
+            })
+            .collect();
+        let result = unsafe {
+            callback(
+                f64_args.as_ptr(),
+                f64_args.len(),
+                user_data_ptr as *mut c_void,
+            )
+        };
+        Ok(JsValue::Number(result))
+    });
 
     match rt
         .tokio_rt
@@ -146,11 +152,8 @@ pub struct TaiyakiArg {
 }
 
 /// C callback type for generic host functions (supports string args).
-pub type TaiyakiHostFnGeneric = unsafe extern "C" fn(
-    args: *const TaiyakiArg,
-    argc: usize,
-    user_data: *mut c_void,
-) -> f64;
+pub type TaiyakiHostFnGeneric =
+    unsafe extern "C" fn(args: *const TaiyakiArg, argc: usize, user_data: *mut c_void) -> f64;
 
 /// Registers a generic host function that receives typed args (number/string/bool).
 #[unsafe(no_mangle)]
@@ -174,51 +177,49 @@ pub unsafe extern "C" fn taiyaki_full_runtime_register_fn(
     let user_data_ptr = user_data as usize;
     let _ = declared_argc;
 
-    let rust_callback: taiyaki_core::engine::HostCallback =
-        Box::new(move |args: &[JsValue]| {
-            // Convert JsValue args to TaiyakiArg, keeping CStrings alive
-            let mut c_strings: Vec<std::ffi::CString> = Vec::new();
-            let c_args: Vec<TaiyakiArg> = args
-                .iter()
-                .map(|a| match a {
-                    JsValue::Number(n) => TaiyakiArg {
-                        arg_type: TaiyakiArgType::Number,
-                        number: *n,
-                        string: std::ptr::null(),
-                        string_len: 0,
-                    },
-                    JsValue::String(s) => {
-                        let cs = std::ffi::CString::new(s.as_str()).unwrap_or_default();
-                        let ptr = cs.as_ptr();
-                        let len = s.len();
-                        c_strings.push(cs);
-                        TaiyakiArg {
-                            arg_type: TaiyakiArgType::String,
-                            number: 0.0,
-                            string: ptr,
-                            string_len: len,
-                        }
-                    }
-                    JsValue::Bool(b) => TaiyakiArg {
-                        arg_type: TaiyakiArgType::Bool,
-                        number: if *b { 1.0 } else { 0.0 },
-                        string: std::ptr::null(),
-                        string_len: 0,
-                    },
-                    _ => TaiyakiArg {
-                        arg_type: TaiyakiArgType::Null,
+    let rust_callback: taiyaki_core::engine::HostCallback = Box::new(move |args: &[JsValue]| {
+        // Convert JsValue args to TaiyakiArg, keeping CStrings alive
+        let mut c_strings: Vec<std::ffi::CString> = Vec::new();
+        let c_args: Vec<TaiyakiArg> = args
+            .iter()
+            .map(|a| match a {
+                JsValue::Number(n) => TaiyakiArg {
+                    arg_type: TaiyakiArgType::Number,
+                    number: *n,
+                    string: std::ptr::null(),
+                    string_len: 0,
+                },
+                JsValue::String(s) => {
+                    let cs = std::ffi::CString::new(s.as_str()).unwrap_or_default();
+                    let ptr = cs.as_ptr();
+                    let len = s.len();
+                    c_strings.push(cs);
+                    TaiyakiArg {
+                        arg_type: TaiyakiArgType::String,
                         number: 0.0,
-                        string: std::ptr::null(),
-                        string_len: 0,
-                    },
-                })
-                .collect();
-            let result = unsafe {
-                callback(c_args.as_ptr(), c_args.len(), user_data_ptr as *mut c_void)
-            };
-            // c_strings dropped here, after callback returns
-            Ok(JsValue::Number(result))
-        });
+                        string: ptr,
+                        string_len: len,
+                    }
+                }
+                JsValue::Bool(b) => TaiyakiArg {
+                    arg_type: TaiyakiArgType::Bool,
+                    number: if *b { 1.0 } else { 0.0 },
+                    string: std::ptr::null(),
+                    string_len: 0,
+                },
+                _ => TaiyakiArg {
+                    arg_type: TaiyakiArgType::Null,
+                    number: 0.0,
+                    string: std::ptr::null(),
+                    string_len: 0,
+                },
+            })
+            .collect();
+        let result =
+            unsafe { callback(c_args.as_ptr(), c_args.len(), user_data_ptr as *mut c_void) };
+        // c_strings dropped here, after callback returns
+        Ok(JsValue::Number(result))
+    });
 
     match rt
         .tokio_rt

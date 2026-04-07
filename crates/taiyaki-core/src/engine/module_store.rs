@@ -92,9 +92,7 @@ impl Resolver for NodeModuleResolver {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or(resolved);
 
-        self.cache
-            .borrow_mut()
-            .insert(cache_key, canonical.clone());
+        self.cache.borrow_mut().insert(cache_key, canonical.clone());
         Ok(canonical)
     }
 }

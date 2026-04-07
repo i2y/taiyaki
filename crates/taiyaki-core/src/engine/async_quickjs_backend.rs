@@ -322,11 +322,9 @@ impl AsyncQuickJsEngine {
         self.context
             .with(|ctx| {
                 let globals = ctx.globals();
-                let val: Value<'_> = globals
-                    .get(&*name)
-                    .map_err(|e| EngineError::JsException {
-                        message: e.to_string(),
-                    })?;
+                let val: Value<'_> = globals.get(&*name).map_err(|e| EngineError::JsException {
+                    message: e.to_string(),
+                })?;
                 qjs_to_jsvalue_handle(val, |v| self.store_persistent(&ctx, v))
             })
             .await

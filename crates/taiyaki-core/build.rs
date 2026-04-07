@@ -38,7 +38,13 @@ fn main() {
         }
         // Skip multi-line continuations of skipped items
         if skip {
-            if line.trim().is_empty() || line.starts_with("extern") || line.starts_with("typedef") || line.starts_with("#") || line.starts_with("/**") || line.starts_with(" *") {
+            if line.trim().is_empty()
+                || line.starts_with("extern")
+                || line.starts_with("typedef")
+                || line.starts_with("#")
+                || line.starts_with("/**")
+                || line.starts_with(" *")
+            {
                 skip = false;
             } else {
                 continue;
