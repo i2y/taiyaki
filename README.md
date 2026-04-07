@@ -92,6 +92,28 @@ html = rt.eval_jsx('<h1 style={{ color: "red" }}>Hello</h1>')
 data = await rt.eval_await("fetch('https://api.example.com').then(r => r.json())")
 ```
 
+### JSX/TSX as a Template Engine
+
+`JsRuntime` can be used standalone — no web server needed. Works with FastAPI, Django, email generation, etc.
+
+```python
+from taiyaki_web.runtime import JsRuntime
+
+rt = JsRuntime()
+rt.load_component("Email", """
+export default function Email({ name, items }) {
+  return (
+    <div>
+      <h1>Hello, {name}!</h1>
+      <ul>{items.map(item => <li>{item}</li>)}</ul>
+    </div>
+  );
+}
+""")
+
+html = rt.render_to_string("Email", {"name": "Alice", "items": ["a", "b", "c"]})
+```
+
 ### Web Framework
 
 ```python
