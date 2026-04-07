@@ -8,6 +8,7 @@ Compiled binaries get full Node.js polyfill support via taiyaki-node-polyfill.
 from __future__ import annotations
 
 import os
+import re
 import platform
 from pathlib import Path
 
@@ -16,6 +17,206 @@ from tsuchi.hir.nodes import HIRModule, HIRFunction
 from tsuchi.type_checker.types import (
     NumberType, BooleanType, StringType, VoidType,
 )
+
+
+def _convert_qjs_to_taiyaki(qjs_lines: list[str]) -> list[str]:
+    """Mechanically convert QuickJS-style C binding code to TaiyakiArg-style.
+
+    Transformation rules:
+    - Function signatures: JSValue js_xxx(JSContext*...) → double taiyaki_xxx(const struct TaiyakiArg*...)
+    - Arg extraction: _rl_int(ctx, argv[N]) → (int)args[N].number, JS_ToCString → args[N].string
+    - Returns: JS_UNDEFINED → 0.0, JS_NewFloat64 → (double), JS_NewBool → (double)
+    - Registration: JS_NewCFunction/JS_SetPropertyStr → taiyaki_full_runtime_register_fn
+    - Constants: JS_SetPropertyStr(ctx, global, "X", JS_NewFloat64(ctx, V)) → eval JS
+    """
+    out: list[str] = []
+    skip_next_free = False
+    const_js_parts: list[str] = []  # collect constant definitions for batch eval
+    in_reg_section = False
+    reg_macro_name = ""
+
+    skip_continuation = False
+    skip_helper_depth = 0
+
+    # Preprocess: join multi-line JS_SetPropertyStr/JS_NewCFunction and return statements
+    joined: list[str] = []
+    buf = ""
+    for line in qjs_lines:
+        stripped = line.rstrip()
+        if buf:
+            buf += " " + stripped.lstrip()
+            if stripped.endswith(';') or stripped.endswith('{') or stripped.endswith('}') or stripped.endswith('*/'):
+                joined.append(buf)
+                buf = ""
+        elif (stripped.endswith(',') or stripped.endswith('(')) and ('JS_SetPropertyStr' in stripped or 'return JS_New' in stripped):
+            buf = stripped
+        else:
+            joined.append(line)
+    if buf:
+        joined.append(buf)
+
+    for line in joined:
+        s = line
+
+        # Skip multi-line macro continuations (lines ending with \)
+        if skip_continuation:
+            skip_continuation = s.rstrip().endswith('\\')
+            continue
+
+        # Skip QuickJS-specific macro defs (including multi-line)
+        if re.match(r'#define\s+\w+', s):
+            skip_continuation = s.rstrip().endswith('\\')
+            continue
+        if re.match(r'#undef\s+\w+', s):
+            continue
+
+        # Skip _rl_int/_rl_dbl helper functions and their full bodies
+        if 'static int _rl_int(JSContext' in s or 'static double _rl_dbl(JSContext' in s:
+            skip_helper_depth = s.count('{') - s.count('}')
+            if skip_helper_depth <= 0:
+                skip_helper_depth = 0
+            continue
+        if skip_helper_depth > 0:
+            skip_helper_depth += s.count('{') - s.count('}')
+            if skip_helper_depth < 0:
+                skip_helper_depth = 0
+            continue
+        if s.strip() in ('return (int)d;', 'return d;', 'double d; JS_ToFloat64(ctx, &d, v); return (int)d;',
+                         'double d; JS_ToFloat64(ctx, &d, v); return d;'):
+            continue
+        if '    double d; JS_ToFloat64(ctx, &d, v);' in s:
+            continue
+
+        # Skip JS_FreeValue/JS_GetGlobalObject/JS_FreeCString
+        if 'JS_FreeValue(ctx,' in s:
+            continue
+        if 'JSValue global = JS_GetGlobalObject(ctx)' in s:
+            continue
+        if 'JS_FreeCString(ctx,' in s:
+            continue
+
+        # Convert function signature (single-line, with or without opening brace)
+        m = re.match(
+            r"static JSValue (js_\w+)\(JSContext \*ctx, JSValueConst this_val, int (?:argc|_argc), JSValueConst \*argv\)\s*\{?",
+            s)
+        if m:
+            fname = m.group(1).replace('js_', 'taiyaki_', 1)
+            out.append(f'static double {fname}(const struct TaiyakiArg *args, uintptr_t argc, void *ud) {{')
+            continue
+
+        # Convert registration function signature: static void js_add_xxx(JSContext *ctx)
+        m = re.match(r"static void (js_add_\w+)\(JSContext \*ctx\)\s*\{?", s)
+        if m:
+            fname = m.group(1).replace('js_add_', 'taiyaki_add_', 1)
+            out.append(f'static void {fname}(struct TaiyakiFullRuntime *rt) {{')
+            continue
+
+        # Convert constant: JS_SetPropertyStr(ctx, global, "NAME", JS_NewFloat64(ctx, VALUE));
+        m = re.search(
+            r'JS_SetPropertyStr\(ctx, global, "(\w+)",\s*JS_NewFloat64\(ctx, ([^)]+)\)\)',
+            s)
+        if m:
+            name, value = m.group(1), m.group(2)
+            const_js_parts.append(f'globalThis.{name}={value}')
+            continue
+
+        # Flush collected constants before non-constant lines if in registration
+        if const_js_parts and not s.strip().startswith('JS_SetPropertyStr'):
+            _flush_constants(out, const_js_parts)
+            const_js_parts.clear()
+
+        # Convert RL_REG/CLAY_REG/etc macro calls
+        m = re.match(r'\s+\w+_REG\((\w+), (\w+), (\d+)\);', s)
+        if m:
+            js_name, c_name, nargs = m.group(1), m.group(2), m.group(3)
+            out.append(
+                f'    taiyaki_full_runtime_register_fn(rt, "{js_name}", {len(js_name)}, '
+                f'taiyaki_rl_{c_name}, {nargs}, NULL);')
+            continue
+
+        # Convert direct JS_SetPropertyStr + JS_NewCFunction registration
+        m = re.search(
+            r'JS_SetPropertyStr\(ctx, global, "(\w+)",\s*'
+            r'JS_NewCFunction\(ctx, (js_\w+), "(\w+)", (\d+)\)\)',
+            s)
+        if m:
+            js_name = m.group(1)
+            c_func = m.group(2).replace('js_', 'taiyaki_', 1)
+            nargs = m.group(4)
+            out.append(
+                f'    taiyaki_full_runtime_register_fn(rt, "{js_name}", {len(js_name)}, '
+                f'{c_func}, {nargs}, NULL);')
+            continue
+
+        # Convert gamepad button/axis constant loops (skip all lines of C for-loops)
+        if '{int i; for(i=0;i<' in s:
+            if 'GAMEPAD_BUTTON' in s:
+                out.append('    { static const char _gp[] = '
+                           '"for(var i=0;i<16;i++)globalThis[\'GAMEPAD_BUTTON_\'+i]=i;'
+                           'for(var i=0;i<6;i++)globalThis[\'GAMEPAD_AXIS_\'+i]=i";')
+                out.append('      taiyaki_full_runtime_eval(rt, _gp, sizeof(_gp) - 1); }')
+            continue
+        # Skip orphaned loop body/close lines
+        if s.strip().startswith('char name[') and 'snprintf' in s:
+            continue
+        if s.strip() == '}}':
+            continue
+
+        # Arg extraction: _rl_int(ctx, argv[N]) → (int)args[N].number
+        s = re.sub(r'_rl_int\(ctx, argv\[(\d+)\]\)', r'(int)args[\1].number', s)
+        # Arg extraction: _rl_dbl(ctx, argv[N]) → args[N].number
+        s = re.sub(r'_rl_dbl\(ctx, argv\[(\d+)\]\)', r'args[\1].number', s)
+        # String arg: "const char *VAR = JS_ToCString(ctx, argv[N]);" → "const char *VAR = args[N].string;"
+        s = re.sub(r'const char \*(\w+) = JS_ToCString\(ctx, argv\[(\d+)\]\)',
+                   r'const char *\1 = args[\2].string', s)
+
+        # Return conversions (use .+ to match nested parens)
+        s = re.sub(r'return JS_UNDEFINED;', 'return 0.0;', s)
+        s = re.sub(r'return JS_NewFloat64\(ctx, (.+)\);', r'return (double)(\1);', s)
+        s = re.sub(r'return JS_NewBool\(ctx, (.+)\);', r'return (double)(\1);', s)
+        # Remaining JS_SetPropertyStr with dynamic name (gamepad loops) — convert to eval
+        m = re.search(r'JS_SetPropertyStr\(ctx, global, (\w+), JS_NewFloat64\(ctx, (\w+)\)\)', s)
+        if m:
+            # This is inside a loop — already handled above, skip
+            continue
+
+        # JS_ToBool(ctx, argv[N]) → (int)args[N].number
+        s = re.sub(r'JS_ToBool\(ctx, argv\[(\d+)\]\)', r'(int)args[\1].number', s)
+        # JS_ToFloat64 with declaration: "double v; JS_ToFloat64(ctx, &v, argv[N]);"
+        s = re.sub(r'double \w+;\s*JS_ToFloat64\(ctx, &\w+, argv\[(\d+)\]\)', r'args[\1].number', s)
+        # JS_ToFloat64 standalone: "JS_ToFloat64(ctx, &VAR, argv[N]);" → "VAR = args[N].number;"
+        s = re.sub(r'\s*JS_ToFloat64\(ctx, &(\w+), argv\[(\d+)\]\);', r' \1 = args[\2].number;', s)
+        # JS_NewObject/JS_NewInt32/JS_NewString etc. remaining patterns
+        s = re.sub(r'JS_NewFloat64\(ctx, ([^)]+)\)', r'(double)(\1)', s)
+        s = re.sub(r'JS_NewBool\(ctx, ([^)]+)\)', r'(double)(\1)', s)
+        s = re.sub(r'JS_NewInt32\(ctx, ([^)]+)\)', r'(double)(\1)', s)
+        # JS_NewString — string returns not supported via f64, return 0.0
+        s = re.sub(r'JSValue \w+ = JS_NewString\(ctx, .+\);', '/* string return not supported via f64 */', s)
+        s = re.sub(r'return JS_NewString\(ctx, .+\);', 'return 0.0; /* string return */', s)
+        # argv[N] → args[N].number (catch-all for any remaining argv references)
+        s = re.sub(r'argv\[(\d+)\]', r'args[\1].number', s)
+
+        out.append(s)
+
+    # Flush any remaining constants
+    if const_js_parts:
+        _flush_constants(out, const_js_parts)
+
+    return out
+
+
+def _flush_constants(out: list[str], parts: list[str]):
+    """Emit taiyaki_full_runtime_eval for batched constant definitions."""
+    # Split into chunks of ~40 to avoid oversized string literals
+    chunk_size = 40
+    for i in range(0, len(parts), chunk_size):
+        chunk = parts[i:i + chunk_size]
+        js_code = ";".join(chunk)
+        escaped = js_code.replace('\\', '\\\\').replace('"', '\\"')
+        out.append('    {')
+        out.append(f'        static const char _c[] = "{escaped}";')
+        out.append(f'        taiyaki_full_runtime_eval(rt, _c, sizeof(_c) - 1);')
+        out.append('    }')
 
 
 def _find_taiyaki_root() -> Path:
@@ -199,6 +400,21 @@ class TaiyakiBackend(BackendBase):
         lines.append('    }')
         lines.append('')
 
+        # Register native bindings (raylib, clay, UI, game framework, FFI)
+        if self._uses_raylib:
+            lines.append('    taiyaki_add_raylib_builtins(_tsuchi_rt);')
+        if self._uses_clay:
+            lines.append('    taiyaki_add_clay_builtins(_tsuchi_rt);')
+        if self._uses_clay_tui:
+            lines.append('    taiyaki_add_clay_tui_builtins(_tsuchi_rt);')
+        if self._uses_ui:
+            lines.append('    taiyaki_add_ui_builtins(_tsuchi_rt);')
+        if self._uses_gf:
+            lines.append('    taiyaki_add_gf_builtins(_tsuchi_rt);')
+        if self._ffi_info is not None and (self._ffi_info.functions or self._ffi_info.structs or self._ffi_info.opaque_classes):
+            lines.append('    taiyaki_add_ffi_builtins(_tsuchi_rt);')
+        lines.append('')
+
         # Evaluate fallback source code
         if has_fallbacks:
             for name, src_lines in hir_module.fallback_sources.items():
@@ -250,7 +466,7 @@ class TaiyakiBackend(BackendBase):
 
         return lines
 
-    # --- Binding stubs (taiyaki provides these via polyfills) ---
+    # --- Bindings (converted from QuickJS backend via _convert_qjs_to_taiyaki) ---
 
     def _generate_cli_bindings(self) -> list[str]:
         return ['/* CLI builtins provided by taiyaki runtime */']
@@ -258,20 +474,68 @@ class TaiyakiBackend(BackendBase):
     def _generate_http_shell_bindings(self) -> list[str]:
         return ['/* HTTP/shell builtins provided by taiyaki runtime */']
 
+    def _get_qjs_backend(self):
+        """Get a QuickJS backend instance to extract binding code from."""
+        from tsuchi.codegen.quickjs_backend import QuickJSBackend
+        qjs = QuickJSBackend.__new__(QuickJSBackend)
+        # Copy relevant state
+        qjs._uses_raylib = self._uses_raylib
+        qjs._uses_clay = self._uses_clay
+        qjs._uses_clay_tui = self._uses_clay_tui
+        qjs._uses_ui = self._uses_ui
+        qjs._uses_gf = self._uses_gf
+        qjs._ffi_info = self._ffi_info
+        return qjs
+
+    def _convert_reg_prefix(self, lines: list[str], prefix: str) -> list[str]:
+        """Fix registration lines to use the correct function prefix."""
+        result = []
+        for line in lines:
+            # Fix taiyaki_rl_ prefix to the correct one
+            if 'taiyaki_full_runtime_register_fn' in line and 'taiyaki_rl_' in line:
+                line = line.replace('taiyaki_rl_', f'taiyaki_{prefix}_')
+            if line.startswith('static double taiyaki_rl_'):
+                line = line.replace('taiyaki_rl_', f'taiyaki_{prefix}_')
+            result.append(line)
+        return result
+
     def _generate_raylib_bindings(self) -> list[str]:
-        return ['/* Raylib bindings not yet supported with taiyaki backend */']
+        if not self._uses_raylib:
+            return []
+        qjs = self._get_qjs_backend()
+        return _convert_qjs_to_taiyaki(qjs._generate_raylib_bindings())
 
     def _generate_clay_bindings(self) -> list[str]:
-        return ['/* Clay bindings not yet supported with taiyaki backend */']
+        if not self._uses_clay:
+            return []
+        qjs = self._get_qjs_backend()
+        converted = _convert_qjs_to_taiyaki(qjs._generate_clay_bindings())
+        return self._convert_reg_prefix(converted, 'clay')
 
     def _generate_clay_tui_bindings(self) -> list[str]:
-        return ['/* Clay TUI bindings not yet supported with taiyaki backend */']
+        if not self._uses_clay_tui:
+            return []
+        qjs = self._get_qjs_backend()
+        converted = _convert_qjs_to_taiyaki(qjs._generate_clay_tui_bindings())
+        return self._convert_reg_prefix(converted, 'ctui')
 
     def _generate_ui_bindings(self) -> list[str]:
-        return ['/* UI widget bindings not yet supported with taiyaki backend */']
+        if not self._uses_ui:
+            return []
+        qjs = self._get_qjs_backend()
+        converted = _convert_qjs_to_taiyaki(qjs._generate_ui_bindings())
+        return self._convert_reg_prefix(converted, 'ui')
 
     def _generate_gf_bindings(self) -> list[str]:
-        return ['/* Game framework bindings not yet supported with taiyaki backend */']
+        if not self._uses_gf:
+            return []
+        qjs = self._get_qjs_backend()
+        converted = _convert_qjs_to_taiyaki(qjs._generate_gf_bindings())
+        return self._convert_reg_prefix(converted, 'gf')
 
     def _generate_ffi_bindings(self) -> list[str]:
-        return ['/* FFI bindings not yet supported with taiyaki backend */']
+        if self._ffi_info is None:
+            return []
+        qjs = self._get_qjs_backend()
+        converted = _convert_qjs_to_taiyaki(qjs._generate_ffi_bindings())
+        return self._convert_reg_prefix(converted, 'ffi')
