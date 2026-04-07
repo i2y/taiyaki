@@ -224,13 +224,10 @@ impl NetState {
                                 let local = stream.local_addr().map(|a| a.to_string()).unwrap_or_default();
                                 let remote = addr.to_string();
                                 tokio::spawn(async move {
-                                    match acceptor.accept(stream).await {
-                                        Ok(tls_stream) => {
-                                            let (read_half, write_half) = tokio::io::split(tls_stream);
-                                            let socket_id = state.insert_split_stream(read_half, write_half, local, remote);
-                                            let _ = accept_tx.send(socket_id);
-                                        }
-                                        Err(_) => {}
+                                    if let Ok(tls_stream) = acceptor.accept(stream).await {
+                                        let (read_half, write_half) = tokio::io::split(tls_stream);
+                                        let socket_id = state.insert_split_stream(read_half, write_half, local, remote);
+                                        let _ = accept_tx.send(socket_id);
                                     }
                                 });
                             }

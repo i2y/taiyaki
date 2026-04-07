@@ -123,7 +123,7 @@ fn cp_spawn_sync(args: &[JsValue]) -> Result<JsValue, EngineError> {
                 #[cfg(unix)]
                 {
                     use std::os::unix::process::ExitStatusExt;
-                    output.status.signal().map(|s| signal_name(s))
+                    output.status.signal().map(signal_name)
                 }
                 #[cfg(not(unix))]
                 {

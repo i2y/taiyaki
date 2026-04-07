@@ -70,7 +70,7 @@ impl QuickJsEngine {
         })
     }
 
-    fn from_qjs<'js>(
+    fn qjs_to_jsvalue<'js>(
         &self,
         ctx: &rquickjs::Ctx<'js>,
         value: Value<'js>,
@@ -130,7 +130,7 @@ impl JsEngine for QuickJsEngine {
                 .into_object()
                 .ok_or_else(|| EngineError::TypeError("Value is not an object".to_string()))?;
             let result: Value<'_> = obj.get(key)?;
-            self.from_qjs(&ctx, result)
+            self.qjs_to_jsvalue(&ctx, result)
         })
     }
 
@@ -162,7 +162,7 @@ impl JsEngine for QuickJsEngine {
                 .into_array()
                 .ok_or_else(|| EngineError::TypeError("Value is not an array".to_string()))?;
             let result: Value<'_> = arr.get(index as usize)?;
-            self.from_qjs(&ctx, result)
+            self.qjs_to_jsvalue(&ctx, result)
         })
     }
 
@@ -187,7 +187,7 @@ impl JsEngine for QuickJsEngine {
                 .map(|a| self.to_qjs(&ctx, a))
                 .collect::<Result<_, _>>()?;
             let result: Value<'_> = func.call((rquickjs::function::Rest(js_args),))?;
-            self.from_qjs(&ctx, result)
+            self.qjs_to_jsvalue(&ctx, result)
         })
     }
 
@@ -201,7 +201,7 @@ impl JsEngine for QuickJsEngine {
     fn parse_json(&self, json: &str) -> Result<JsValue, EngineError> {
         self.context.with(|ctx| {
             let val: Value<'_> = ctx.json_parse(json)?;
-            self.from_qjs(&ctx, val)
+            self.qjs_to_jsvalue(&ctx, val)
         })
     }
 

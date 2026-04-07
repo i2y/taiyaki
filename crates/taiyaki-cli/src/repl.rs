@@ -62,10 +62,10 @@ impl Completer for ReplHelper {
 /// Refresh the cached list of global variable names from the JS engine.
 async fn refresh_globals(engine: &crate::Engine, globals: &Arc<Mutex<Vec<String>>>) {
     let code = "JSON.stringify(Object.getOwnPropertyNames(globalThis))";
-    if let Ok(JsValue::String(json)) = engine.eval(code).await {
-        if let Ok(names) = serde_json::from_str::<Vec<String>>(&json) {
-            *globals.lock().unwrap() = names;
-        }
+    if let Ok(JsValue::String(json)) = engine.eval(code).await
+        && let Ok(names) = serde_json::from_str::<Vec<String>>(&json)
+    {
+        *globals.lock().unwrap() = names;
     }
 }
 
@@ -254,7 +254,7 @@ async fn handle_dot_command(
     let arg = parts.get(1).map(|s| s.trim()).unwrap_or("");
 
     match cmd {
-        ".exit" | ".quit" => return Some(false),
+        ".exit" | ".quit" => Some(false),
         ".help" => {
             print_help(is_tty);
             Some(true)

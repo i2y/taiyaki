@@ -16,13 +16,14 @@ use swc_ecma_transforms_base::{
 use swc_ecma_transforms_typescript::typescript;
 use swc_ts_fast_strip::{Mode, Options, operate};
 
+#[derive(Default)]
 pub struct Transpiler {
     _priv: (),
 }
 
 impl Transpiler {
     pub fn new() -> Self {
-        Self { _priv: () }
+        Self::default()
     }
 
     pub fn strip_types(&self, ts_code: &str) -> Result<String, TranspileError> {

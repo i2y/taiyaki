@@ -189,8 +189,8 @@ pub async fn remove(packages: &[String]) -> Result<(), Box<dyn std::error::Error
 
 fn parse_package_spec(spec: &str) -> (String, String) {
     // Handle scoped packages: @scope/name@version
-    if spec.starts_with('@') {
-        if let Some(at_pos) = spec[1..].find('@') {
+    if let Some(rest) = spec.strip_prefix('@') {
+        if let Some(at_pos) = rest.find('@') {
             let at_pos = at_pos + 1;
             return (spec[..at_pos].to_string(), spec[at_pos + 1..].to_string());
         }
@@ -212,14 +212,12 @@ async fn install_package(
 ) -> Result<String, Box<dyn std::error::Error>> {
     // Check if already installed
     let pkg_dir = node_modules.join(name);
-    if pkg_dir.exists() {
-        if let Ok(content) = std::fs::read_to_string(pkg_dir.join("package.json")) {
-            if let Ok(installed_pkg) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(ver) = installed_pkg.get("version").and_then(|v| v.as_str()) {
-                    return Ok(ver.to_string());
-                }
-            }
-        }
+    if pkg_dir.exists()
+        && let Ok(content) = std::fs::read_to_string(pkg_dir.join("package.json"))
+        && let Ok(installed_pkg) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(ver) = installed_pkg.get("version").and_then(|v| v.as_str())
+    {
+        return Ok(ver.to_string());
     }
 
     // Fetch package metadata from npm registry
@@ -258,12 +256,11 @@ async fn install_package(
     // Install sub-dependencies (one level deep for simplicity)
     for (dep_name, dep_range) in &version_meta.dependencies {
         let dep_dir = node_modules.join(dep_name);
-        if !dep_dir.exists() {
-            if let Err(e) =
+        if !dep_dir.exists()
+            && let Err(e) =
                 Box::pin(install_package(client, dep_name, dep_range, node_modules)).await
-            {
-                eprintln!("    Warning: failed to install {dep_name}: {e}");
-            }
+        {
+            eprintln!("    Warning: failed to install {dep_name}: {e}");
         }
     }
 
@@ -280,19 +277,18 @@ fn resolve_version(
     range: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
     // "latest" → use dist-tags.latest
-    if range == "latest" || range.is_empty() {
-        if let Some(tags) = &meta.dist_tags {
-            if let Some(latest) = tags.get("latest") {
-                return Ok(latest.clone());
-            }
-        }
+    if (range == "latest" || range.is_empty())
+        && let Some(tags) = &meta.dist_tags
+        && let Some(latest) = tags.get("latest")
+    {
+        return Ok(latest.clone());
     }
 
     // Exact version
-    if let Some(versions) = &meta.versions {
-        if versions.contains_key(range) {
-            return Ok(range.to_string());
-        }
+    if let Some(versions) = &meta.versions
+        && versions.contains_key(range)
+    {
+        return Ok(range.to_string());
     }
 
     // Semver range resolution
@@ -322,12 +318,12 @@ struct VersionReq {
 
 fn parse_version_range(range: &str) -> VersionReq {
     let range = range.trim();
-    let (op, ver_str) = if range.starts_with("^") {
-        ("^", &range[1..])
-    } else if range.starts_with("~") {
-        ("~", &range[1..])
-    } else if range.starts_with(">=") {
-        (">=", &range[2..])
+    let (op, ver_str) = if let Some(r) = range.strip_prefix('^') {
+        ("^", r)
+    } else if let Some(r) = range.strip_prefix('~') {
+        ("~", r)
+    } else if let Some(r) = range.strip_prefix(">=") {
+        (">=", r)
     } else if range == "*" {
         return VersionReq {
             op: "*",

@@ -74,7 +74,7 @@ pub fn key_data_b64<'a>(key: &'a serde_json::Value, fn_name: &str) -> Result<&'a
 }
 
 /// Extract the hash algorithm name from an algorithm JSON object.
-pub fn algo_hash<'a>(algo: &'a serde_json::Value) -> &'a str {
+pub fn algo_hash(algo: &serde_json::Value) -> &str {
     algo.get("hash")
         .and_then(|h| {
             h.as_str()

@@ -68,10 +68,10 @@ async fn register_fetch(
                 let perms = perms.clone();
                 Box::pin(async move {
                     // Check net permission based on URL host.
-                    if let Ok(parsed) = url::Url::parse(&url) {
-                        if let Some(host) = parsed.host_str() {
-                            perms.check_net(host).map_err(|e| e.to_string())?;
-                        }
+                    if let Ok(parsed) = url::Url::parse(&url)
+                        && let Some(host) = parsed.host_str()
+                    {
+                        perms.check_net(host).map_err(|e| e.to_string())?;
                     }
                     let mut req = match method.as_str() {
                         "POST" => client.post(&url),

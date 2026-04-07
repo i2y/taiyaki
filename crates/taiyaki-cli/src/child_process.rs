@@ -165,8 +165,8 @@ pub async fn register_child_process(
                     // Spawn background task via tokio runtime handle
                     state.rt_handle.spawn(async move {
                         let tx_out = event_tx.clone();
-                        let stdout_handle = if let Some(mut out) = stdout {
-                            Some(tokio::spawn(async move {
+                        let stdout_handle = stdout.map(|mut out| {
+                            tokio::spawn(async move {
                                 let mut buf = vec![0u8; 4096];
                                 loop {
                                     match out.read(&mut buf).await {
@@ -184,14 +184,12 @@ pub async fn register_child_process(
                                         Err(_) => break,
                                     }
                                 }
-                            }))
-                        } else {
-                            None
-                        };
+                            })
+                        });
 
                         let tx_err = event_tx.clone();
-                        let stderr_handle = if let Some(mut err) = stderr {
-                            Some(tokio::spawn(async move {
+                        let stderr_handle = stderr.map(|mut err| {
+                            tokio::spawn(async move {
                                 let mut buf = vec![0u8; 4096];
                                 loop {
                                     match err.read(&mut buf).await {
@@ -209,10 +207,8 @@ pub async fn register_child_process(
                                         Err(_) => break,
                                     }
                                 }
-                            }))
-                        } else {
-                            None
-                        };
+                            })
+                        });
 
                         if let Some(h) = stdout_handle {
                             let _ = h.await;
@@ -228,7 +224,7 @@ pub async fn register_child_process(
                                     #[cfg(unix)]
                                     {
                                         use std::os::unix::process::ExitStatusExt;
-                                        status.signal().map(|s| signal_name(s))
+                                        status.signal().map(signal_name)
                                     }
                                     #[cfg(not(unix))]
                                     {
@@ -347,10 +343,10 @@ pub async fn register_child_process(
                     let pid = args.first().map(|v| v.coerce_u64()).unwrap_or(0);
                     let data = args.get(1).map(|v| v.coerce_string()).unwrap_or_default();
                     let procs = state.processes.lock().unwrap();
-                    if let Some(handle) = procs.get(&pid) {
-                        if let Some(ref tx) = handle.stdin_tx {
-                            let _ = tx.send(data.into_bytes());
-                        }
+                    if let Some(handle) = procs.get(&pid)
+                        && let Some(ref tx) = handle.stdin_tx
+                    {
+                        let _ = tx.send(data.into_bytes());
                     }
                     Ok(JsValue::Undefined)
                 }),
@@ -367,10 +363,10 @@ pub async fn register_child_process(
                 Box::new(move |args: &[JsValue]| {
                     let pid = args.first().map(|v| v.coerce_u64()).unwrap_or(0);
                     let mut procs = state.processes.lock().unwrap();
-                    if let Some(handle) = procs.get_mut(&pid) {
-                        if let Some(tx) = handle.stdin_tx.take() {
-                            let _ = tx.send(Vec::new());
-                        }
+                    if let Some(handle) = procs.get_mut(&pid)
+                        && let Some(tx) = handle.stdin_tx.take()
+                    {
+                        let _ = tx.send(Vec::new());
                     }
                     Ok(JsValue::Undefined)
                 }),

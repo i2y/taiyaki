@@ -55,10 +55,10 @@ pub fn build(
     bundle.push_str("})();\n");
 
     // Write output
-    if let Some(parent) = outfile.parent() {
-        if !parent.exists() {
-            std::fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = outfile.parent()
+        && !parent.exists()
+    {
+        std::fs::create_dir_all(parent)?;
     }
     std::fs::write(outfile, &bundle)?;
 
@@ -81,6 +81,7 @@ pub fn build(
     Ok(())
 }
 
+#[allow(clippy::only_used_in_recursion)]
 fn collect_module(
     file: &Path,
     base_dir: &Path,
@@ -114,12 +115,12 @@ fn collect_module(
     let imports = extract_imports(&code);
 
     for import_path in &imports {
-        if import_path.starts_with('.') {
-            if let Some(resolved) = resolve_module(dir, import_path) {
-                collect_module(
-                    &resolved, base_dir, modules, visited, module_ids, id_counter,
-                )?;
-            }
+        if import_path.starts_with('.')
+            && let Some(resolved) = resolve_module(dir, import_path)
+        {
+            collect_module(
+                &resolved, base_dir, modules, visited, module_ids, id_counter,
+            )?;
         }
     }
 
@@ -129,19 +130,19 @@ fn collect_module(
     // Rewrite require('./foo') to require('m1') etc.
     let mut rewritten = cjs;
     for import_path in &imports {
-        if import_path.starts_with('.') {
-            if let Some(resolved) = resolve_module(dir, import_path) {
-                let resolved = resolved.canonicalize().unwrap_or(resolved);
-                if let Some(mid) = module_ids.get(&resolved) {
-                    rewritten = rewritten.replace(
-                        &format!("require(\"{import_path}\")"),
-                        &format!("require(\"{mid}\")"),
-                    );
-                    rewritten = rewritten.replace(
-                        &format!("require('{import_path}')"),
-                        &format!("require(\"{mid}\")"),
-                    );
-                }
+        if import_path.starts_with('.')
+            && let Some(resolved) = resolve_module(dir, import_path)
+        {
+            let resolved = resolved.canonicalize().unwrap_or(resolved);
+            if let Some(mid) = module_ids.get(&resolved) {
+                rewritten = rewritten.replace(
+                    &format!("require(\"{import_path}\")"),
+                    &format!("require(\"{mid}\")"),
+                );
+                rewritten = rewritten.replace(
+                    &format!("require('{import_path}')"),
+                    &format!("require(\"{mid}\")"),
+                );
             }
         }
     }
@@ -163,10 +164,11 @@ fn extract_imports(code: &str) -> Vec<String> {
             }
         }
         // export ... from 'xxx'
-        if trimmed.starts_with("export ") && trimmed.contains(" from ") {
-            if let Some(path) = extract_string_after(trimmed, "from ") {
-                imports.push(path);
-            }
+        if trimmed.starts_with("export ")
+            && trimmed.contains(" from ")
+            && let Some(path) = extract_string_after(trimmed, "from ")
+        {
+            imports.push(path);
         }
         // require('xxx')
         if let Some(pos) = trimmed.find("require(") {

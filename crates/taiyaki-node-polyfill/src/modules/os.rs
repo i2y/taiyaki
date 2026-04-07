@@ -175,7 +175,7 @@ fn os_uptime(_args: &[JsValue]) -> Result<JsValue, EngineError> {
             return Ok(JsValue::Number(0.0));
         }
         let now = unsafe { libc::time(std::ptr::null_mut()) };
-        return Ok(JsValue::Number((now - tv.tv_sec) as f64));
+        Ok(JsValue::Number((now - tv.tv_sec) as f64))
     }
     #[cfg(target_os = "linux")]
     {

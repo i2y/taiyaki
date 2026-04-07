@@ -110,7 +110,7 @@ fn extract_handle(val: &LibtsValue) -> Option<u64> {
 /// Returns the last error message, or NULL if no error.
 /// The returned pointer is valid until the next taiyaki call.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_get_last_error() -> *const c_char {
+pub unsafe extern "C" fn taiyaki_get_last_error() -> *const c_char {
     LAST_ERROR.with(|e| match e.borrow().as_ref() {
         Some(msg) => msg.as_ptr(),
         None => ptr::null(),
@@ -119,7 +119,7 @@ pub extern "C" fn taiyaki_get_last_error() -> *const c_char {
 
 /// Creates a new runtime. Returns NULL on failure.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_runtime_new() -> *mut LibtsRuntime {
+pub unsafe extern "C" fn taiyaki_runtime_new() -> *mut LibtsRuntime {
     ffi_guard!(ptr::null_mut(), {
         match EngineImpl::new() {
             Ok(engine) => Box::into_raw(Box::new(LibtsRuntime {
@@ -136,7 +136,7 @@ pub extern "C" fn taiyaki_runtime_new() -> *mut LibtsRuntime {
 
 /// Frees a runtime. NULL-safe.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_runtime_free(rt: *mut LibtsRuntime) {
+pub unsafe extern "C" fn taiyaki_runtime_free(rt: *mut LibtsRuntime) {
     if !rt.is_null() {
         let _ = panic::catch_unwind(AssertUnwindSafe(|| unsafe {
             drop(Box::from_raw(rt));
@@ -162,7 +162,7 @@ fn eval_inner(rt: &LibtsRuntime, code: &str) -> Result<JsValue, String> {
 /// Returns a pointer to LibtsValue on success (caller frees with taiyaki_value_free).
 /// Returns NULL on failure.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_eval(
+pub unsafe extern "C" fn taiyaki_eval(
     rt: *mut LibtsRuntime,
     code: *const c_char,
     len: usize,
@@ -193,7 +193,7 @@ pub extern "C" fn taiyaki_eval(
 /// Evaluates TypeScript code (strips type annotations before execution).
 /// `code` is a UTF-8 string of length `len`.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_eval_ts(
+pub unsafe extern "C" fn taiyaki_eval_ts(
     rt: *mut LibtsRuntime,
     code: *const c_char,
     len: usize,
@@ -230,7 +230,7 @@ pub extern "C" fn taiyaki_eval_ts(
 
 /// Returns the type of a value.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_value_type(val: *const LibtsValue) -> LibtsType {
+pub unsafe extern "C" fn taiyaki_value_type(val: *const LibtsValue) -> LibtsType {
     if val.is_null() {
         return LibtsType::Undefined;
     }
@@ -249,7 +249,7 @@ pub extern "C" fn taiyaki_value_type(val: *const LibtsValue) -> LibtsType {
 
 /// Returns the value as a number. Returns 0.0 if not a number.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_value_as_number(val: *const LibtsValue) -> f64 {
+pub unsafe extern "C" fn taiyaki_value_as_number(val: *const LibtsValue) -> f64 {
     if val.is_null() {
         return 0.0;
     }
@@ -262,7 +262,7 @@ pub extern "C" fn taiyaki_value_as_number(val: *const LibtsValue) -> f64 {
 
 /// Returns the value as a boolean (1 or 0). Returns 0 if not a boolean.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_value_as_bool(val: *const LibtsValue) -> i32 {
+pub unsafe extern "C" fn taiyaki_value_as_bool(val: *const LibtsValue) -> i32 {
     if val.is_null() {
         return 0;
     }
@@ -279,7 +279,7 @@ pub extern "C" fn taiyaki_value_as_bool(val: *const LibtsValue) -> i32 {
 /// If `out_len` is non-NULL, writes the string length.
 /// Returns NULL if not a string.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_value_as_string(
+pub unsafe extern "C" fn taiyaki_value_as_string(
     val: *mut LibtsValue,
     out_len: *mut usize,
 ) -> *const c_char {
@@ -313,7 +313,7 @@ pub extern "C" fn taiyaki_value_as_string(
 /// Frees a LibtsValue. NULL-safe.
 /// For handle values, also releases the engine-side handle.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_value_free(val: *mut LibtsValue) {
+pub unsafe extern "C" fn taiyaki_value_free(val: *mut LibtsValue) {
     if !val.is_null() {
         let _ = panic::catch_unwind(AssertUnwindSafe(|| {
             let val = unsafe { Box::from_raw(val) };
@@ -329,13 +329,13 @@ pub extern "C" fn taiyaki_value_free(val: *mut LibtsValue) {
 
 /// Creates an f64 value.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_value_number(n: f64) -> *mut LibtsValue {
+pub unsafe extern "C" fn taiyaki_value_number(n: f64) -> *mut LibtsValue {
     wrap_value(JsValue::Number(n))
 }
 
 /// Creates a string value. `s` is a UTF-8 string of length `len`.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_value_string(s: *const c_char, len: usize) -> *mut LibtsValue {
+pub unsafe extern "C" fn taiyaki_value_string(s: *const c_char, len: usize) -> *mut LibtsValue {
     ffi_guard!(ptr::null_mut(), {
         if s.is_null() {
             set_last_error("Null argument passed to taiyaki_value_string");
@@ -354,19 +354,19 @@ pub extern "C" fn taiyaki_value_string(s: *const c_char, len: usize) -> *mut Lib
 
 /// Creates a boolean value. 0 maps to false, anything else to true.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_value_bool(b: i32) -> *mut LibtsValue {
+pub unsafe extern "C" fn taiyaki_value_bool(b: i32) -> *mut LibtsValue {
     wrap_value(JsValue::Bool(b != 0))
 }
 
 /// Creates a null value.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_value_null() -> *mut LibtsValue {
+pub unsafe extern "C" fn taiyaki_value_null() -> *mut LibtsValue {
     wrap_value(JsValue::Null)
 }
 
 /// Creates an undefined value.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_value_undefined() -> *mut LibtsValue {
+pub unsafe extern "C" fn taiyaki_value_undefined() -> *mut LibtsValue {
     wrap_value(JsValue::Undefined)
 }
 
@@ -374,7 +374,7 @@ pub extern "C" fn taiyaki_value_undefined() -> *mut LibtsValue {
 
 /// Creates an empty JS object.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_object_new(rt: *mut LibtsRuntime) -> *mut LibtsValue {
+pub unsafe extern "C" fn taiyaki_object_new(rt: *mut LibtsRuntime) -> *mut LibtsValue {
     ffi_guard!(ptr::null_mut(), {
         if rt.is_null() {
             set_last_error("Null runtime");
@@ -393,7 +393,7 @@ pub extern "C" fn taiyaki_object_new(rt: *mut LibtsRuntime) -> *mut LibtsValue {
 
 /// Sets a property on an object. Returns 0 on success, -1 on error.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_object_set(
+pub unsafe extern "C" fn taiyaki_object_set(
     rt: *mut LibtsRuntime,
     obj: *const LibtsValue,
     key: *const c_char,
@@ -434,7 +434,7 @@ pub extern "C" fn taiyaki_object_set(
 
 /// Gets a property from an object.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_object_get(
+pub unsafe extern "C" fn taiyaki_object_get(
     rt: *mut LibtsRuntime,
     obj: *const LibtsValue,
     key: *const c_char,
@@ -475,7 +475,7 @@ pub extern "C" fn taiyaki_object_get(
 
 /// Creates an empty JS array.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_array_new(rt: *mut LibtsRuntime) -> *mut LibtsValue {
+pub unsafe extern "C" fn taiyaki_array_new(rt: *mut LibtsRuntime) -> *mut LibtsValue {
     ffi_guard!(ptr::null_mut(), {
         if rt.is_null() {
             set_last_error("Null runtime");
@@ -494,7 +494,7 @@ pub extern "C" fn taiyaki_array_new(rt: *mut LibtsRuntime) -> *mut LibtsValue {
 
 /// Pushes an element onto an array. Returns 0 on success, -1 on error.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_array_push(
+pub unsafe extern "C" fn taiyaki_array_push(
     rt: *mut LibtsRuntime,
     arr: *const LibtsValue,
     val: *const LibtsValue,
@@ -526,7 +526,7 @@ pub extern "C" fn taiyaki_array_push(
 
 /// Gets an element from an array by index.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_array_get(
+pub unsafe extern "C" fn taiyaki_array_get(
     rt: *mut LibtsRuntime,
     arr: *const LibtsValue,
     index: u32,
@@ -557,7 +557,10 @@ pub extern "C" fn taiyaki_array_get(
 
 /// Returns the length of an array. Returns -1 on error.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_array_length(rt: *mut LibtsRuntime, arr: *const LibtsValue) -> i32 {
+pub unsafe extern "C" fn taiyaki_array_length(
+    rt: *mut LibtsRuntime,
+    arr: *const LibtsValue,
+) -> i32 {
     ffi_guard!(-1, {
         if rt.is_null() || arr.is_null() {
             set_last_error("Null argument passed to taiyaki_array_length");
@@ -586,7 +589,7 @@ pub extern "C" fn taiyaki_array_length(rt: *mut LibtsRuntime, arr: *const LibtsV
 
 /// Calls a JS function. `func` must be a FunctionHandle.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_call(
+pub unsafe extern "C" fn taiyaki_call(
     rt: *mut LibtsRuntime,
     func: *const LibtsValue,
     args: *const *const LibtsValue,
@@ -635,7 +638,7 @@ pub extern "C" fn taiyaki_call(
 /// Serializes a handle value to a JSON string.
 /// Returns a String-typed LibtsValue.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_to_json(
+pub unsafe extern "C" fn taiyaki_to_json(
     rt: *mut LibtsRuntime,
     val: *const LibtsValue,
 ) -> *mut LibtsValue {
@@ -665,7 +668,7 @@ pub extern "C" fn taiyaki_to_json(
 
 /// Parses a JSON string and returns a handle value.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_from_json(
+pub unsafe extern "C" fn taiyaki_from_json(
     rt: *mut LibtsRuntime,
     json: *const c_char,
     len: usize,
@@ -699,7 +702,7 @@ pub extern "C" fn taiyaki_from_json(
 /// `name` is a UTF-8 string of length `name_len`.
 /// `callback` is a C function pointer; `user_data` is passed through to the callback.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_register_fn(
+pub unsafe extern "C" fn taiyaki_register_fn(
     rt: *mut LibtsRuntime,
     name: *const c_char,
     name_len: usize,
@@ -722,35 +725,34 @@ pub extern "C" fn taiyaki_register_fn(
 
         let user_data_ptr = user_data as usize;
 
-        let rust_callback: Box<dyn Fn(&[JsValue]) -> Result<JsValue, EngineError>> =
-            Box::new(move |args: &[JsValue]| {
-                let c_args: Vec<*mut LibtsValue> =
-                    args.iter().map(|a| wrap_value(a.clone())).collect();
-                let c_arg_ptrs: Vec<*const LibtsValue> =
-                    c_args.iter().map(|p| *p as *const LibtsValue).collect();
+        type HostFn = Box<dyn Fn(&[JsValue]) -> Result<JsValue, EngineError>>;
+        let rust_callback: HostFn = Box::new(move |args: &[JsValue]| {
+            let c_args: Vec<*mut LibtsValue> = args.iter().map(|a| wrap_value(a.clone())).collect();
+            let c_arg_ptrs: Vec<*const LibtsValue> =
+                c_args.iter().map(|p| *p as *const LibtsValue).collect();
 
-                let result_ptr = unsafe {
-                    callback(
-                        c_arg_ptrs.as_ptr(),
-                        c_arg_ptrs.len(),
-                        user_data_ptr as *mut c_void,
-                    )
-                };
+            let result_ptr = unsafe {
+                callback(
+                    c_arg_ptrs.as_ptr(),
+                    c_arg_ptrs.len(),
+                    user_data_ptr as *mut c_void,
+                )
+            };
 
-                // Free temporary LibtsValues (not handle values, so no engine needed)
-                for ptr in c_args {
-                    unsafe {
-                        drop(Box::from_raw(ptr));
-                    }
+            // Free temporary LibtsValues (not handle values, so no engine needed)
+            for ptr in c_args {
+                unsafe {
+                    drop(Box::from_raw(ptr));
                 }
+            }
 
-                if result_ptr.is_null() {
-                    Ok(JsValue::Undefined)
-                } else {
-                    let result_box = unsafe { Box::from_raw(result_ptr) };
-                    Ok(result_box.inner)
-                }
-            });
+            if result_ptr.is_null() {
+                Ok(JsValue::Undefined)
+            } else {
+                let result_box = unsafe { Box::from_raw(result_ptr) };
+                Ok(result_box.inner)
+            }
+        });
 
         match rt.engine.register_global_fn(name_str, rust_callback) {
             Ok(()) => 0,
@@ -766,7 +768,7 @@ pub extern "C" fn taiyaki_register_fn(
 
 /// Sets the memory limit in bytes. 0 means unlimited.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_set_memory_limit(rt: *mut LibtsRuntime, bytes: usize) {
+pub unsafe extern "C" fn taiyaki_set_memory_limit(rt: *mut LibtsRuntime, bytes: usize) {
     ffi_guard!((), {
         if rt.is_null() {
             return;
@@ -778,7 +780,7 @@ pub extern "C" fn taiyaki_set_memory_limit(rt: *mut LibtsRuntime, bytes: usize) 
 
 /// Sets the maximum stack size in bytes.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_set_max_stack_size(rt: *mut LibtsRuntime, bytes: usize) {
+pub unsafe extern "C" fn taiyaki_set_max_stack_size(rt: *mut LibtsRuntime, bytes: usize) {
     ffi_guard!((), {
         if rt.is_null() {
             return;
@@ -790,7 +792,7 @@ pub extern "C" fn taiyaki_set_max_stack_size(rt: *mut LibtsRuntime, bytes: usize
 
 /// Sets an execution timeout in milliseconds. Uses the interrupt handler.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_set_execution_timeout(rt: *mut LibtsRuntime, milliseconds: u64) {
+pub unsafe extern "C" fn taiyaki_set_execution_timeout(rt: *mut LibtsRuntime, milliseconds: u64) {
     ffi_guard!((), {
         if rt.is_null() {
             return;
@@ -803,7 +805,7 @@ pub extern "C" fn taiyaki_set_execution_timeout(rt: *mut LibtsRuntime, milliseco
 
 /// Returns memory usage statistics. Returns 0 on success, -1 on error.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_memory_usage(rt: *mut LibtsRuntime, out: *mut MemoryStats) -> i32 {
+pub unsafe extern "C" fn taiyaki_memory_usage(rt: *mut LibtsRuntime, out: *mut MemoryStats) -> i32 {
     ffi_guard!(-1, {
         if rt.is_null() || out.is_null() {
             set_last_error("Null argument passed to taiyaki_memory_usage");
@@ -819,7 +821,7 @@ pub extern "C" fn taiyaki_memory_usage(rt: *mut LibtsRuntime, out: *mut MemorySt
 
 /// Triggers garbage collection.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_run_gc(rt: *mut LibtsRuntime) {
+pub unsafe extern "C" fn taiyaki_run_gc(rt: *mut LibtsRuntime) {
     ffi_guard!((), {
         if rt.is_null() {
             return;
@@ -836,7 +838,7 @@ pub extern "C" fn taiyaki_run_gc(rt: *mut LibtsRuntime) {
 /// `code` is a UTF-8 string of length `code_len`.
 /// `name` is a UTF-8 module name of length `name_len`.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_eval_module(
+pub unsafe extern "C" fn taiyaki_eval_module(
     rt: *mut LibtsRuntime,
     code: *const c_char,
     code_len: usize,
@@ -875,7 +877,7 @@ pub extern "C" fn taiyaki_eval_module(
 
 /// Evaluates TypeScript code as an ES module (strips types first).
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_eval_module_ts(
+pub unsafe extern "C" fn taiyaki_eval_module_ts(
     rt: *mut LibtsRuntime,
     code: *const c_char,
     code_len: usize,
@@ -921,7 +923,7 @@ pub extern "C" fn taiyaki_eval_module_ts(
 
 /// Registers a module source for later import. Returns 0 on success, -1 on error.
 #[unsafe(no_mangle)]
-pub extern "C" fn taiyaki_register_module(
+pub unsafe extern "C" fn taiyaki_register_module(
     rt: *mut LibtsRuntime,
     name: *const c_char,
     name_len: usize,

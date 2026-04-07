@@ -40,7 +40,7 @@ pub fn crypto_generate_key(args: &[JsValue]) -> Result<JsValue, EngineError> {
                         .or_else(|| h.get("name").and_then(|n| n.as_str()))
                 })
                 .unwrap_or("SHA-256");
-            let length = json_u64(&algo, "length").unwrap_or_else(|| match hash {
+            let length = json_u64(&algo, "length").unwrap_or(match hash {
                 "SHA-1" => 160,
                 "SHA-256" => 256,
                 "SHA-384" => 384,
