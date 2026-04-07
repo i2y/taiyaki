@@ -1,6 +1,6 @@
 [package]
 name = "taiyaki-cli"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "JS/TS runtime CLI — run, test, REPL, bundler, and more"
 license = "MIT"
@@ -21,8 +21,8 @@ jsc = ["taiyaki-core/jsc", "taiyaki-node-polyfill/jsc"]
 sqlite = ["dep:rusqlite"]
 
 [dependencies]
-taiyaki-core = { version = "0.1.1", path = "../taiyaki-core", default-features = false }
-taiyaki-node-polyfill = { version = "0.1.1", path = "../taiyaki-node-polyfill", default-features = false }
+taiyaki-core = { version = "0.1.2", path = "../taiyaki-core", default-features = false }
+taiyaki-node-polyfill = { version = "0.1.2", path = "../taiyaki-node-polyfill", default-features = false }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt", "time", "macros", "net", "sync", "io-std", "process", "fs"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
