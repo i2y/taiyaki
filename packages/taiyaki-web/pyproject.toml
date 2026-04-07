@@ -32,6 +32,9 @@ asyncio_mode = "auto"
 [tool.setuptools.packages.find]
 include = ["taiyaki_web*"]
 
+[tool.setuptools.package-data]
+taiyaki_web = ["vendor/*.js", "vendor/LICENSES.md"]
+
 [project.urls]
 Repository = "https://github.com/i2y/taiyaki"
 

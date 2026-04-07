@@ -726,6 +726,22 @@ impl JsEngine for JscEngine {
             .borrow_mut()
             .insert(name.to_string(), cjs.clone());
 
+        // Sync all Rust-side module_sources into JS-side __builtin_sources
+        // so that require() inside eval_module can resolve them.
+        {
+            let sources = self.module_sources.borrow();
+            for (mod_name, mod_code) in sources.iter() {
+                let escaped = mod_code
+                    .replace('\\', "\\\\")
+                    .replace('`', "\\`")
+                    .replace('$', "\\$");
+                let _ = self.eval(&format!(
+                    "globalThis.__builtin_sources=globalThis.__builtin_sources||{{}};\
+                     globalThis.__builtin_sources['{mod_name}']=`{escaped}`;"
+                ));
+            }
+        }
+
         // Wrap CJS code in an IIFE that provides require/exports/module.
         // For async modules (top-level await), use async IIFE that returns a Promise.
         let has_await = code.contains("await ");
